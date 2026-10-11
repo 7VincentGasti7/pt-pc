@@ -248,6 +248,9 @@ bool BoxInPlanes(const glm::vec3& c, const glm::vec3& h, const glm::vec4* planes
 // (0xCDB4F0): the apex, the point r = outerRange / cos(u / 2) along the axis and the octagon around the circle at angle u
 // from the axis at distance r (u the umbra half angle, at most 90 degrees; octagon corners (1, tan 22.5) and its turns
 // in the light's frame), cut to the light area's box (0x512340); the cut can leave a box whose minimum passes its maximum
+// how far from the eye a light's box may lie and still light what the ray traced reflections show off screen
+constexpr float kReflectionLightReach = 40.0f;
+
 LightBox LightGridBox(const SceneLight& l) {
     LightBox box{l.position - glm::vec3(l.outer_range), l.position + glm::vec3(l.outer_range)};
     if (l.type != LightType::Spot) {
@@ -759,6 +762,11 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
         } else {
             const auto view_drop = [&](const ViewSetup& view, const lightcull::OccluderSet& occluders, const char* name) -> std::string {
                 if (!BoxInCullView(view, box)) {
+                    if (explain) {
+                        return std::format("{} ({:.2f} {:.2f} {:.2f})-({:.2f} {:.2f} {:.2f}) outside the {} view (type {} range {:.2f} dimmer {:.2f} cos {:.3f} dir ({:.2f} {:.2f} {:.2f}) up ({:.2f} {:.2f} {:.2f}) area {})",
+                                           lightcull::GridFromEnv().valid ? "grid box" : "box", box.lo.x, box.lo.y, box.lo.z, box.hi.x, box.hi.y, box.hi.z, name,
+                                           static_cast<int>(l.type), l.outer_range, l.dimmer, l.cos_outer, l.direction.x, l.direction.y, l.direction.z, l.up.x, l.up.y, l.up.z, l.has_area);
+                    }
                     return std::format("{} outside the {} view", lightcull::GridFromEnv().valid ? "grid box" : "box", name);
                 }
                 const int hider = lightcull::FindOccludingVolume(box.lo, box.hi, occluders);
@@ -775,6 +783,14 @@ void SceneRenderer::PrepareFrame(const Camera& camera, const std::vector<DrawIte
                                    name, v.source, q.x, q.y, q.z, v.area, v.distance, box.lo.x, box.lo.y, box.lo.z, box.hi.x, box.hi.y, box.hi.z);
             };
             drop = view_drop(main_view_, main_occluders_, "camera");
+            // the ray traced floor reflections shade what they hit off screen with this light list: a light dropped because its
+            // box left the view darkened those surfaces in the reflection, so the lamps' reflections on the wet street went out
+            // and came back as the mouse turned the view (1.0.3 test). With them on, a light within reach of the eye stays
+            static const bool no_cull = std::getenv("PT_LIGHT_NO_VIEW_CULL") != nullptr;
+            if (!drop.empty() && (no_cull || rt_reflections_)) {
+                const glm::vec3 nearest = glm::clamp(camera.position, box.lo, box.hi);
+                if (no_cull || glm::distance(nearest, camera.position) < kReflectionLightReach) drop.clear();
+            }
             if (!drop.empty() && mirror_active_) {
                 const std::string mirror_drop = view_drop(mirror_view_, mirror_occluders_, "mirror");
                 drop = mirror_drop.empty() ? std::string() : drop + "; " + mirror_drop;
@@ -1040,7 +1056,8 @@ void SceneRenderer::BuildShadowViews(const SceneLighting& lighting, const glm::v
     }
     if (static const bool trace_selection = std::getenv("PT_SHADOW_SELECTION") != nullptr; trace_selection) {
         static uint32_t trace_frame = 0;
-        if (++trace_frame % 120 == 0) {
+        static const int trace_every = std::max(1, std::atoi(std::getenv("PT_SHADOW_SELECTION")));
+        if (++trace_frame % (trace_every > 1 ? trace_every : 120) == 0) {
             LogInfo("shadow selection: eye ({:.3f} {:.3f} {:.3f}) RT {}", eye.x, eye.y, eye.z, rt_active_);
             for (const Candidate& c : ranked) {
                 const bool selected = std::any_of(candidates.begin(), candidates.end(), [&](const Candidate& s) { return s.light == c.light; });
@@ -2422,6 +2439,8 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
     if (main_view && up_.enabled) {
         RecordOpaqueSnapshot(cmd, output);
     }
+    SceneVfxContext liquid_context;
+    bool liquid_depth = false;
     if (vfx_forward) {
         SceneVfxContext context;
         context.cmd = cmd;
@@ -2452,8 +2471,23 @@ void SceneRenderer::RecordView(VkCommandBuffer cmd, const ViewSetup& view, Rende
         if (&output == &hdr_) {
             RecordEffects(cmd, output, context);
         }
+        liquid_context = context;
+        liquid_depth = vfx_liquid_depth && main_view && &output == &hdr_ && !context.mirrored;
     }
     vkCmdEndRendering(cmd);
+    if (liquid_depth) {
+        // the original draws the alpha tested liquids with depth writes on (liquid_trace_f010 1490: DB_DEPTH_CONTROL 0x7e6 on the
+        // full resolution Primitive_Liquid2Final draws, 0x7e2 on the half resolution ones): the Freezer's view blood
+        // (fx_sh_viwbld01_s0, 0.15 m in front of the camera) then lies in the depth of field's near blur, which smears it on PS4.
+        // Without the depth it took the far scene's focus and stayed sharp
+        UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}, {&hdr_copy_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
+        BeginPass(cmd, ViewArea(view), {}, &depth_, false, false);
+        liquid_context.cmd = cmd;
+        vfx_liquid_depth(liquid_context);
+        vkCmdEndRendering(cmd);
+        UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
+        BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
+    }
     if (main_view && dump_requested_ && &output == &hdr_) {
         RecordDumpCopy(cmd, output, dump_scene_);
         dump_recorded_ = true;
@@ -2717,11 +2751,42 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
         }
         Stamp(cmd, 9);
         if (up_.enabled) {
-            BeginLabel(cmd, "upscale");
-            RecordUpscale(cmd, dt);
-            EndLabel(cmd);
-            post_bindings_ = true;
-            BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
+            if (up_.backend && up_.backend->ExternalSubmit() && vr_eye_ < 0) {
+                // Apple MetalFX: the pass runs on a Metal command buffer, so the frame is submitted up to the inputs, the
+                // upscaler runs, and the rest of the frame continues in a new command buffer (Renderer::SplitForExternal)
+                BeginLabel(cmd, "upscale");
+                RecordUpscalePrepare(dt);
+                // MetalFX frame generation only records its output-image layout hand-off here; do it before the frame
+                // command buffer is submitted/split. Its interpolation itself runs later, after the frame's HUD-less copy.
+                if (upscale.frame_generation == FrameGenKind::Metalfx) {
+                    PrepareFrameGeneration(up_dispatch_, true);
+                }
+                EndLabel(cmd);
+                VkSemaphore signal = VK_NULL_HANDLE;
+                VkSemaphore wait = VK_NULL_HANDLE;
+                uint64_t signal_value = 0;
+                uint64_t wait_value = 0;
+                if (up_.backend->ExternalSync(signal, signal_value, wait, wait_value) && renderer_->SplitForExternal(signal, signal_value, wait, wait_value)) {
+                    const bool upscaled = up_.backend->ExternalRun(up_dispatch_);
+                    cmd = renderer_->Cmd();
+                    BeginLabel(cmd, "upscale resolve");
+                    BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
+                    RecordUpscaleResolve(cmd, upscaled);
+                    EndLabel(cmd);
+                } else {
+                    // without the split the frame renders without the upscaler this frame, as when a backend cannot run
+                    upscale_stats_.error = "the upscaler's frame split failed";
+                    RecordUpscaleResolve(renderer_->Cmd(), false);
+                }
+                post_bindings_ = true;
+                BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
+            } else {
+                BeginLabel(cmd, "upscale");
+                RecordUpscale(cmd, dt);
+                EndLabel(cmd);
+                post_bindings_ = true;
+                BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
+            }
         }
         Stamp(cmd, 10);
         BeginLabel(cmd, "post");

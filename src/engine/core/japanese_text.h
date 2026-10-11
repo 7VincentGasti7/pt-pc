@@ -18,7 +18,7 @@ inline constexpr Text kMenu[] = {
     {"pc_unlimited","上限なし"},
     {"pc_note_fps_limit","描画フレーム数を制限します。メニューは最大60 FPSです。垂直同期により、さらに低い上限になる場合があります。"},
     {"pc_hdr","ネイティブHDR"},
-    {"pc_note_hdr_restart","次回起動時に適用されます。対応ディスプレイでHDRを有効にしてください。対応していない場合はSDRで表示します。"},
+    {"pc_note_hdr_restart","すぐに適用されます。WindowsでこのディスプレイのHDRを有効にしてください。無効の場合はSDRで表示します。"},
     {"pc_surround","サラウンド出力"},
     {"pc_note_surround","再起動後、出力機器の5.1または7.1チャンネルを使用します。ステレオ機器ではステレオのままです。"},
     {"pc_rumble_profile","振動モード"},

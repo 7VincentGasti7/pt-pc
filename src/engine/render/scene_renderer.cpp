@@ -106,7 +106,7 @@ bool SceneRenderer::EnsureShadowTarget() {
 
 bool SceneRenderer::Init(Renderer& renderer, TextureManager& textures) {
     renderer_ = &renderer;
-    ldr_format_ = renderer.OutputMode() == RendererOutputMode::Sdr ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R16G16B16A16_SFLOAT;
+    ldr_format_ = VK_FORMAT_R8G8B8A8_UNORM;
     textures_ = &textures;
     vk::Context& ctx = renderer.Context();
     device_ = ctx.device;
@@ -667,14 +667,14 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
     ok = ok && CreateTarget(dof_half_, kPostFormat, shift1, color, c) && CreateTarget(dof_quarter_[0], kPostFormat, shift2, color, c) &&
          CreateTarget(dof_quarter_[1], kPostFormat, shift2, color, c) && CreateTarget(dof_eighth_[0], kPostFormat, shift3, color, c) &&
          CreateTarget(dof_eighth_[1], kPostFormat, shift3, color, c) && CreateTarget(velocity_, kPostFormat, output, color, c) &&
-         CreateTarget(object_velocity_, kPostFormat, extent, color, c) && CreateTarget(mb_blur_[0], kPostFormat, shift1, color, c) &&
-         CreateTarget(mb_blur_[1], kPostFormat, shift1, color, c);
+         CreateTarget(object_velocity_, kPostFormat, extent, color, c) && CreateTarget(mb_blur_[0], kPostFormat, output, color, c) &&
+         CreateTarget(mb_blur_[1], kPostFormat, output, color, c);
     for (uint32_t i = 0; i < 5 && ok; ++i) {
         const uint32_t round = (2u << i) - 1u;
         ok = CreateTarget(mb_tile_[i], kPostFormat, {(output.width + round) >> (i + 1), (output.height + round) >> (i + 1)}, color, c);
     }
     ok = ok && CreateTarget(mb_neighbour_, kPostFormat, mb_tile_[4].Extent(), color, c) &&
-         CreateTarget(mb_bake_, kPostFormat, {(output.width + 1) >> 1, (output.height + 1) >> 1}, color, c);
+         CreateTarget(mb_bake_, kPostFormat, output, color, c);
     ok = ok && (!upscaling || CreateUpscaleTargets(extent, output));
     ok = ok && (!upscaling ||
                 (CreateTarget(mirror_history_, kHdrFormat, extent, color | VK_IMAGE_USAGE_TRANSFER_DST_BIT, c) &&
@@ -1265,6 +1265,10 @@ void SceneRenderer::ReadMeasurements(FrameSlot& slot, float dt, const ExposureSe
         step = diff;
     }
     ev_ += step;
+    // PT_EV_TRACE=1: each adaptation step (the measured luminance, the EV it moves toward, the EV after the step)
+    if (static const bool ev_trace = std::getenv("PT_EV_TRACE") != nullptr; ev_trace) {
+        LogInfo("ev trace: measured {:.5f} raw {:.5f} target {:.3f} ev {:.3f} dt {:.4f}", measured, raw, target, ev_, dt);
+    }
 }
 
 namespace {

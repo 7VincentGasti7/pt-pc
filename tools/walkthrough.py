@@ -857,6 +857,7 @@ SCENARIOS = {
             r"ocho: LogicControl 3",
             r"expect ok .*: ocho look-back phase 0",
             r"ocho: look back armed",
+            r"ocho: kill",
             r"input script: \d+ expectations, 0 failed",
         ],
     },

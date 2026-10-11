@@ -517,7 +517,10 @@ uint32_t TextureManager::LoadModImage(const QarArchive& qar, const std::string& 
         LogWarn("mods: {}.png ignored: a cube or volume texture is replaced by a .ftex only", stem);
         return kWhite;
     }
-    const bool srgb = !raw && (!has_original || original.Srgb());
+    // a new picture (a mod's own path, a glTF model's image) is colour unless its name says it is data as the game's names do
+    // (_nrm normal maps, _srm specular maps, _lin linear)
+    const bool data_name = stem.ends_with("_nrm") || stem.ends_with("_srm") || stem.ends_with("_lin");
+    const bool srgb = !raw && (has_original ? original.Srgb() : !data_name);
     std::vector<std::vector<uint8_t>> levels;
     uint32_t width = 0, height = 0;
     std::string error;

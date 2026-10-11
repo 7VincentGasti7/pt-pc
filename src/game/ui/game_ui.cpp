@@ -110,6 +110,15 @@ bool GameUi::ScriptCommand(Game& game, std::string_view op, std::string_view tex
         if (ui) {
             ui->QueueMenuInput(input);
         }
+    } else if (op == "menuclick" || op == "menupoint") {
+        // menuclick x y / menupoint x y: the pointer at (x, y) in the menu's units (centre origin, y up), with a click or only over
+        MenuInput input;
+        input.pointer_valid = true;
+        input.pointer = glm::vec2(arg(0), arg(1));
+        input.click = op == "menuclick";
+        if (ui) {
+            ui->QueueMenuInput(input);
+        }
     } else if (op == "subtitle") {
         if (ui) {
             ui->ShowSubtitle(text, arg(0));
@@ -960,8 +969,11 @@ constexpr float kPhotoScale = 0.8f;
 constexpr float kPhotoLabelX = -58.0f;
 constexpr float kPhotoValueX = kPhotoLabelX + 32.0f * kPhotoScale;
 constexpr float kPhotoArrow = 12.0f * kPhotoScale;
-constexpr float kPhotoTitleY = 30.0f;
-constexpr float kPhotoTop = 25.5f;
+constexpr float kPhotoTitleY = 32.0f;
+constexpr float kPhotoTop = 27.5f;
+// the lowest the help line may reach (the screen's edge is at -36) and the note's and help's room under the rows
+constexpr float kPhotoBottom = -35.0f;
+constexpr float kPhotoTipRoom = 11.6f;
 constexpr float kPhotoRowStep = 3.0f * kPhotoScale;
 constexpr float kPhotoSectionGap = 3.5f * kPhotoScale;
 constexpr float kPhotoPanelRight = -14.0f;
@@ -1103,6 +1115,13 @@ void GameUi::DrawPhotoPanel(ui::UiBatch& batch, const UiCanvas& canvas, const Ph
 
     text(kOptionTitle, glm::vec2(1.0f), PcText("pc_photo_title", language), kPhotoLabelX, text_right, kPhotoTitleY, ui::TextAlign::Start,
          root_color * node_color(kOptionTitle));
+    // the rows close up when they would push the note and the help line off the screen (the resolution, colour filter and
+    // flashlight rows had put the help's last lines under the screen's edge)
+    int sections = 0;
+    for (const PhotoPanelRow& row : view.rows) sections += row.section ? 1 : 0;
+    const int steps = static_cast<int>(view.rows.size());
+    const float room = kPhotoTop - (kPhotoBottom + kPhotoTipRoom) - std::max(0, sections - 1) * (kPhotoSectionGap - kPhotoRowStep);
+    const float row_step = steps > 0 ? std::min(kPhotoRowStep, room / static_cast<float>(steps)) : kPhotoRowStep;
     float y = kPhotoTop;
     bool first = true;
     for (const PhotoPanelRow& row : view.rows) {
@@ -1111,7 +1130,7 @@ void GameUi::DrawPhotoPanel(ui::UiBatch& batch, const UiCanvas& canvas, const Ph
             text(kOptionHeaderText, glm::vec2(1.0f), row.label, kPhotoLabelX, kPhotoValueX + kPhotoArrow + 2.0f, y, ui::TextAlign::Start,
                  root_color * node_color(kOptionHeaderText));
             mesh(kOptionHeaderLine, glm::vec2(1.0f), glm::vec2(kPhotoLabelX, y) + glm::vec2(16.0f, -1.0f) * kPhotoScale, root_color);
-            y -= kPhotoRowStep;
+            y -= row_step;
             first = false;
             continue;
         }
@@ -1132,12 +1151,12 @@ void GameUi::DrawPhotoPanel(ui::UiBatch& batch, const UiCanvas& canvas, const Ph
                      tint(available ? (row.selected ? 1.0f : 0.65f) : 0.25f));
             }
         }
-        y -= kPhotoRowStep;
+        y -= row_step;
     }
     const glm::vec4 tip_color = root_color * node_color(kOptionTipText);
     const float note_top = y - 0.6f;
     box_text(kOptionTipText, view.note, {kPhotoLabelX, note_top - 5.4f}, {text_right, note_top}, tip_color);
-    box_text(kOptionTipText, view.hint, {kPhotoLabelX, note_top - 11.0f}, {text_right, note_top - 6.2f},
+    box_text(kOptionTipText, view.hint, {kPhotoLabelX, std::max(note_top - 11.0f, kPhotoBottom)}, {text_right, note_top - 6.2f},
              tip_color * glm::vec4(1.0f, 1.0f, 1.0f, 0.6f));
 }
 

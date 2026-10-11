@@ -41,14 +41,15 @@ void main() {
     }
     vec3 graded = c;
     if (pass.f0.w > 0.0) {
-        graded = Lut16(RES_COLOR_LUT, c);
+        // the LUT takes the colour within 0 to 1 (a value past 1 from the HDR target had reached into the next blue slice of the
+        // strip: cyan lamp bulbs with HDR on)
+        vec3 within = clamp(c, 0.0, 1.0);
+        graded = Lut16(RES_COLOR_LUT, within);
         if (pass.f0.y < 1.0) {
-            graded = mix(Lut16(RES_COLOR_LUT_PREV, c), graded, pass.f0.y);
+            graded = mix(Lut16(RES_COLOR_LUT_PREV, within), graded, pass.f0.y);
         }
     }
-    if (pass.f1.x > 0.5 && pass.ids.y != 1u) {
-        vec3 extended = SrgbEncode(max(hdr, vec3(1.0)));
-        graded = mix(graded, max(graded, extended), greaterThan(hdr, vec3(1.0)));
-    }
+    // HDR outputs keep the tonemapped range (paper white at the top) as the original's clipped image: the lamp globes are
+    // translucent and made to clip, and every extended range tried showed the wall's lines through them (1.0.3 tests)
     out_color = vec4(graded, Luma601(graded));
 }

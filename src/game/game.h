@@ -166,7 +166,9 @@ public:
     void SetShowBody(bool on) { show_body_ = on; }
     bool ShowBody() const { return show_body_; }
     // the body is drawn in the camera view: the free camera and the photo mode (ShowBody) or the third person view
-    bool BodyShown() const { return show_body_ || third_person_shown_; }
+    // the third person flag only without a camera override: the photo mode pauses the game, which kept the flag of the frame
+    // before it and drew the body with the photo's "Player body: Hidden" (third person on)
+    bool BodyShown() const { return show_body_ || (third_person_shown_ && !camera_override_); }
     // the free camera (Extras) and the photo mode: the rendered view is not the player's, whose body and handy light stay where
     // the player's own view puts them, with the body shown or not; the third person view while it shows the body, too
     void SetDetachedView(bool on) { detached_view_ = on; }
@@ -389,6 +391,12 @@ public:
     // loop browser's record is (not in the save, so Reset Progress keeps it). An entry can be opened always in the developer
     // build, and in the release build once its key was reached ("finished": once the game was finished)
     void NoteArchive(std::string_view key);
+    // the mods' inspector (F8 with a mod installed, docs/modding.md): logs the model the camera looks at, the lights near it and
+    // where the player stands, in the stage space and with the names level.json takes
+    void LogModInspect(const Camera& camera);
+    // F9: the camera as lines of a shadPS4 capture route (tools/shadps4_capture.py: world space goto and lookat), so a reference
+    // shot is taken from exactly the place and direction a report shows
+    void LogCapturePose(const Camera& camera);
     void SetArchiveSeen(std::set<std::string> keys) { archive_seen_ = std::move(keys); }
     const std::set<std::string>& ArchiveSeen() const { return archive_seen_; }
     bool ArchiveUnlocked(const ArchiveEntry& entry) const;

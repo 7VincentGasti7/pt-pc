@@ -959,11 +959,16 @@ void RenderSceneBuilder::Build(Game& game, const Camera& camera, float dt, Scene
             }
             for (const auto& data : stage.files) {
                 for (const LightPlacement& light : data->lights) {
-                    if (!light.entity || !EntityEnabled(&stage, *data->file, *light.entity)) {
+                    if (!light.entity || light.mod_off || !EntityEnabled(&stage, *data->file, *light.entity)) {
                         continue;
                     }
                     const uint64_t id = (uint64_t(stage.id) << 40) ^ reinterpret_cast<uintptr_t>(light.entity);
+                    const size_t before = out.lights.size();
                     AddLight(*data->file, *light.entity, stage.file_to_world, id, out);
+                    if (out.lights.size() > before && (light.mod_tint != glm::vec3(1.0f) || light.mod_brightness != 1.0f)) {
+                        // a mod's level.json tint and brightness
+                        out.lights.back().intensity *= light.mod_tint * light.mod_brightness;
+                    }
                 }
             }
         },

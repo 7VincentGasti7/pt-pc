@@ -75,8 +75,8 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     const ExposureSettings& exposure = lighting.exposure;
     gpu::PassPush push;
     push.ids.w = post_view_;
-    const bool hdr_output = renderer_->OutputMode() != RendererOutputMode::Sdr;
-    push.f1.x = hdr_output ? 1.0f : 0.0f;
+    // every output takes the same sRGB encoded frame (Renderer::SceneColorFormat); the HDR outputs convert it at the end
+    push.f1.x = 0.0f;
 
     const char* native_order_override = std::getenv("PT_AA_NATIVE_ORDER");
     const bool native_aa_order = toggles.fxaa && !up_.enabled && native_order_override && std::string(native_order_override) == "1";
@@ -251,7 +251,7 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     const bool grain = toggles.film_grain && screen.film_grain && lighting.valid;
     const bool distortion = toggles.distortion && screen.screen_distortion && lighting.valid;
     push.f0 = glm::vec4(distortion ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
-    push.f1 = glm::vec4(graphics.clarity, hdr_output ? 1.0f : 0.0f, 0.0f, 0.0f);
+    push.f1 = glm::vec4(graphics.clarity, 0.0f, 0.0f, 0.0f);
     Fullscreen(cmd, screen_fx_, push);
     renderer_->grain[0] = grain ? 1.0f : 0.0f;
     renderer_->grain[1] = screen.grain_alt ? 1.0f : 0.0f;
@@ -387,9 +387,11 @@ void SceneRenderer::UpdateMotion(const Camera& camera, float dt) {
     motion_reference_set_ = false;
     last_camera_ = camera;
     has_last_camera_ = true;
+    bool cut = false;
     if (glm::distance(previous.position, camera.position) > kCameraCutDistance || glm::dot(previous.Forward(), camera.Forward()) < 0.7071f) {
         previous = camera;
         up_.reset = true;
+        cut = true;
     }
     if (!motion_history_valid_) {
         up_.reset = true;
@@ -398,6 +400,35 @@ void SceneRenderer::UpdateMotion(const Camera& camera, float dt) {
     previous_view_projection_ = previous.Projection(aspect) * previous.View();
     const float step = std::clamp(interval, 1.0e-4f, 1.0f);
     frame_time_ = reference ? static_cast<double>(step) : static_cast<double>(step * 0.016666668f) + frame_time_ * 0.9833333333333333;
+    // The motion blur draws each frame's camera motion stretched to the shutter over the smoothed frame time. With the mouse
+    // the turn of a single frame varies a lot (its events land unevenly on the frames, the frames' lengths vary), so the blur
+    // grew and shrank from one frame to the next: the bright, fine texture of the wet street and the lit floors flickered
+    // while the view turned (1.0.3 test; off with motion blur off). The blur takes the camera's motion per second smoothed
+    // over about 50 ms instead, back over the smoothed frame time; the upscaler and the reflections keep the exact frame
+    if (reference) {
+        blur_previous_view_projection_ = previous_view_projection_;
+        blur_rates_valid_ = false;
+        return;
+    }
+    const auto wrap = [](float a) { return std::remainder(a, glm::two_pi<float>()); };
+    const glm::vec4 rates(wrap(camera.yaw - previous.yaw) / step, (camera.pitch - previous.pitch) / step, wrap(camera.roll - previous.roll) / step, 0.0f);
+    const glm::vec3 velocity = (camera.position - previous.position) / step;
+    if (cut || !motion_history_valid_ || !blur_rates_valid_) {
+        blur_rates_ = cut ? glm::vec4(0.0f) : rates;
+        blur_velocity_ = cut ? glm::vec3(0.0f) : velocity;
+        blur_rates_valid_ = true;
+    } else {
+        const float follow = 1.0f - std::exp(-step / 0.05f);
+        blur_rates_ += (rates - blur_rates_) * follow;
+        blur_velocity_ += (velocity - blur_velocity_) * follow;
+    }
+    const float span = static_cast<float>(frame_time_);
+    Camera blurred = camera;
+    blurred.yaw = camera.yaw - blur_rates_.x * span;
+    blurred.pitch = camera.pitch - blur_rates_.y * span;
+    blurred.roll = camera.roll - blur_rates_.z * span;
+    blurred.position = camera.position - blur_velocity_ * span;
+    blur_previous_view_projection_ = blurred.Projection(aspect) * blurred.View();
 }
 
 bool SceneRenderer::RecordMotionBlur(VkCommandBuffer cmd, const ScreenSettings& screen, int& current) {
@@ -410,7 +441,7 @@ bool SceneRenderer::RecordMotionBlur(VkCommandBuffer cmd, const ScreenSettings& 
     gpu::PassPush push;
     push.ids = glm::uvec4(gpu::kImgObjectVelocity, 0, 0, post_view_);
     push.f0 = glm::vec4(1920.0f / 128.0f, 1080.0f / 128.0f, 0.0f, 0.0f);
-    push.m = previous_view_projection_;
+    push.m = blur_previous_view_projection_;
     UseTargets(cmd, {{&depth_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}});
     PostPass(cmd, velocity_, mb_velocity_, push);
     push = gpu::PassPush{};

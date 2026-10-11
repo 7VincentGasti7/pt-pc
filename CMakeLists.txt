@@ -4,7 +4,13 @@ cmake_minimum_required(VERSION 3.28)
 if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Oldest macOS the build runs on" FORCE)
 endif()
-project(pt_port LANGUAGES C CXX)
+# OBJCXX on macOS for the Apple MetalFX upscaler (cmake/MacOS.cmake, metalfx_backend.mm); the language is set here so its
+# variables are initialized, as enable_language after project does not
+if(CMAKE_HOST_APPLE OR APPLE)
+  project(pt_port LANGUAGES C CXX OBJCXX)
+else()
+  project(pt_port LANGUAGES C CXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,7 +38,7 @@ file(GLOB_RECURSE PT_GAME_SOURCES CONFIGURE_DEPENDS src/game/*.cpp src/game/*.h 
 # This build's version: raised here for each release. tools/ci/release.py --version sets it through the environment at build
 # time (cmake/version.cmake); PT_VERSION_OVERRIDE sets it for one build folder.
 set(PT_VERSION_OVERRIDE "" CACHE STRING "Version for this build folder instead of the one in CMakeLists.txt")
-set(PT_VERSION "1.0.2")
+set(PT_VERSION "1.0.3")
 if(PT_VERSION_OVERRIDE)
   set(PT_VERSION "${PT_VERSION_OVERRIDE}")
 endif()

@@ -1,3 +1,4 @@
+#include "engine/assets/gltf_model.h"
 #include "game/ui/archive_view.h"
 
 #include <algorithm>
@@ -58,9 +59,8 @@ glm::vec2 ArchiveView::TextureSize(UiAssets& assets, const std::string& path) {
 }
 
 bool ArchiveView::LoadPiece(UiAssets& assets, const std::string& model, const glm::mat4& to_plane, Piece& out) {
-    const auto bytes = assets.Files().ReadFile(model);
     FmdlModel fmdl;
-    if (!bytes || !LoadFmdl(*bytes, model, fmdl) || fmdl.mesh.vertices.empty()) {
+    if (!LoadModelFile(assets.Files(), model, fmdl) || fmdl.mesh.vertices.empty()) {
         LogWarn("archive: photo piece {} unreadable", model);
         return false;
     }
@@ -231,7 +231,7 @@ void ArchiveView::DrawFrame(ui::UiBatch& batch, const UiCanvas& canvas, UiAssets
     const bool drawn = picture && DrawPicture(batch, assets, panel, pa, pb, panel.lift);
     if (drawn) {
         if (!selected) solid(pa, pb, glm::vec4(0.0f, 0.0f, 0.0f, 0.22f));
-    } else if (!locked && !name.empty()) {
+    } else if (!locked && !picture && !name.empty()) {
         // no picture yet (its capture still running, or its file still being decoded): the name in the frame
         DrawLine(batch, canvas, assets, name, 15.0f, lo + glm::vec2(inset + 8.0f), hi - glm::vec2(inset + 8.0f), ui::TextAlign::Center,
                  selected ? 0.8f : 0.45f, language);

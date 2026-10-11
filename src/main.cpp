@@ -17,6 +17,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <array>
 #include <chrono>
@@ -31,6 +32,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 #include "engine/anim/anim_test.h"
@@ -38,6 +40,7 @@
 #include "engine/assets/enhanced_textures.h"
 #include "engine/assets/geom.h"
 #include "engine/core/log.h"
+#include "engine/core/crash_upload.h"
 #include "engine/core/crash_report.h"
 #include "engine/core/memory_status.h"
 #include "build_id.h"
@@ -682,7 +685,17 @@ void MountMods(App& app) {
     if (!std::filesystem::is_directory(dir, ec)) {
         if (!options.mods_dir.empty()) {
             pt::LogWarn("mods: {} is not a folder", pt::os::PathToUtf8(dir));
+            return;
         }
+        // players looked for a mods folder that did not exist until they made it: the game makes it, with a note in it
+        if (options.headless || !std::filesystem::create_directories(dir, ec)) {
+            return;
+        }
+        std::ofstream note(dir / "README.txt", std::ios::binary);
+        note << "Put each mod in its own folder here, then restart the game.\r\n"
+                "Once a mod is installed, PC settings shows a Mods row under Graphics to turn each one on or off. Search pt.log (in the data folder) for \"mods:\".\r\n"
+                "How to make one: docs/modding.md and docs/modding-quickstart.md at https://github.com/LoreanXavier/pt-pc\r\n";
+        pt::LogInfo("mods: made the empty folder {}", pt::os::PathToUtf8(dir));
         return;
     }
     std::vector<std::string> warnings;
@@ -1288,7 +1301,7 @@ bool DrawUpscaleSettings(App& app) {
     bool changed = false;
     ImGui::SeparatorText("Upscaling");
     const pt::UpscalerKind kinds[] = {pt::UpscalerKind::Off, pt::UpscalerKind::Fsr, pt::UpscalerKind::Fsr4, pt::UpscalerKind::Dlss,
-                                      pt::UpscalerKind::Xess};
+                                      pt::UpscalerKind::Xess, pt::UpscalerKind::MetalFx};
     if (ImGui::BeginCombo("Upscaler", pt::UpscalerName(u.kind))) {
         for (pt::UpscalerKind kind : kinds) {
             std::string reason;
@@ -1358,6 +1371,27 @@ bool DrawUpscaleSettings(App& app) {
     if (!fg_available) {
         ImGui::SameLine();
         ImGui::TextDisabled("(%s)", fg_reason.c_str());
+    }
+    pt::FrameGeneration* metalfx_fg = pt::UpscaleHost::Get().MetalFxFrameGen();
+    std::string metalfx_reason;
+    bool metalfx_available = metalfx_fg && metalfx_fg->Available(metalfx_reason);
+    if (metalfx_available && (off || u.kind != pt::UpscalerKind::MetalFx)) {
+        metalfx_available = false;
+        metalfx_reason = u.kind == pt::UpscalerKind::MetalFx ? "needs an upscaler (native AA works)" : metalfx_reason;
+        if (u.kind != pt::UpscalerKind::MetalFx) {
+            metalfx_reason = "needs the MetalFX upscaler";
+        }
+    }
+    ImGui::BeginDisabled(!metalfx_available);
+    bool metalfx_fg_on = u.frame_generation == pt::FrameGenKind::Metalfx;
+    if (ImGui::Checkbox("Frame generation (MetalFX, experimental; macOS 26+)", &metalfx_fg_on)) {
+        u.frame_generation = metalfx_fg_on ? pt::FrameGenKind::Metalfx : pt::FrameGenKind::Off;
+        changed = true;
+    }
+    ImGui::EndDisabled();
+    if (!metalfx_available) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s)", off ? "needs an upscaler" : metalfx_reason.c_str());
     }
     const pt::DlssFrameGenSupport& dlss_fg = pt::UpscaleHost::Get().DlssFrameGen();
     const bool dlss_fg_available = dlss_fg.hardware && dlss_fg.built && !off;
@@ -1900,8 +1934,11 @@ public:
         display.rows.push_back(std::move(resolution));
         const bool dlssg_vsync = pt::streamline::Active() && pt::streamline::FrameGenNeedsVsyncOff() &&
                                  app_.scene.upscale.frame_generation == pt::FrameGenKind::Dlss;
+        const bool metalfx_vsync = app_.scene.upscale.frame_generation == pt::FrameGenKind::Metalfx;
         display.rows.push_back(Row(kVsync, "pc_vsync", OffOn(), s.display.vsync ? 1 : 0,
-                                   dlssg_vsync ? "pc_note_vsync_dlssg" : s.display.vsync ? "pc_note_vsync" : "pc_note_vsync_off"));
+                                   dlssg_vsync ? "pc_note_vsync_dlssg"
+                                   : metalfx_vsync ? "pc_note_vsync_metalfx"
+                                   : s.display.vsync ? "pc_note_vsync" : "pc_note_vsync_off"));
         pt::game::PcSettingRow cap = Row(kFpsLimit, "pc_fps_limit", {"pc_unlimited","30","60","90","120","144","165","240","360"}, 0, "pc_note_fps_limit");
         constexpr int fps_caps[] = {0,30,60,90,120,144,165,240,360};
         for (int i=0;i<9;++i) if (fps_caps[i]==s.display.fps_limit) cap.value=i;
@@ -1951,8 +1988,8 @@ public:
             sharpness.wrap = false;
             upscaling.rows.push_back(std::move(sharpness));
         }
-        // Off, AMD FSR 3 and NVIDIA DLSS Frame Generation; one this machine cannot run shows greyed with its reason
-        pt::game::PcSettingRow frame_generation = Row(kFrameGeneration, "pc_frame_generation", {"pc_off", "FSR 3", "DLSS"},
+        // Off, AMD FSR 3, NVIDIA DLSS and Apple MetalFX Frame Generation; one this machine cannot run shows greyed with its reason
+        pt::game::PcSettingRow frame_generation = Row(kFrameGeneration, "pc_frame_generation", {"pc_off", "FSR 3", "DLSS", "MetalFX"},
                                                       static_cast<int>(u.frame_generation), "pc_note_frame_generation");
         std::string fg_reason;
         pt::FrameGeneration* fg = pt::UpscaleHost::Get().FrameGen();
@@ -1969,7 +2006,21 @@ public:
         if (pt::streamline::Active() && fsr_note.empty()) {
             fsr_note = "pc_note_fsr_fg_restart";
         }
-        frame_generation.value_notes = {std::string(), fsr_note, dlss_note};
+        std::string metalfx_note;
+        if (pt::FrameGeneration* metalfx_fg = pt::UpscaleHost::Get().MetalFxFrameGen()) {
+            std::string metalfx_reason;
+            if (!metalfx_fg->Available(metalfx_reason)) {
+                metalfx_note = Sentence(metalfx_reason);
+            }
+        } else {
+            metalfx_note = "pc_note_frame_generation_missing";
+        }
+        frame_generation.value_notes = {std::string(), fsr_note, dlss_note, metalfx_note};
+        if (u.frame_generation == pt::FrameGenKind::Dlss) {
+            frame_generation.note = pt::streamline::Active() ? "pc_note_frame_generation_dlss" : "pc_note_dlssg_restart";
+        } else if (u.frame_generation == pt::FrameGenKind::Metalfx) {
+            frame_generation.note = "pc_note_frame_generation_metalfx";
+        }
         if (u.frame_generation == pt::FrameGenKind::Dlss) {
             frame_generation.note = pt::streamline::Active() ? "pc_note_frame_generation_dlss" : "pc_note_dlssg_restart";
         }
@@ -2184,8 +2235,8 @@ public:
             break;
         }
         case kHdr:
-            if (s.display.hdr != (value == 1)) game_.ShowNoticeDialog("pc_restart_needed");
             s.display.hdr = value == 1;
+            app_.renderer.SetHdr(s.display.hdr);
             break;
         case kSurround:
             if (s.audio.surround != (value == 1)) game_.ShowNoticeDialog("pc_restart_needed");
@@ -3160,6 +3211,7 @@ private:
         case pt::UpscalerKind::Fsr4: return "FSR 4";
         case pt::UpscalerKind::Dlss: return "DLSS";
         case pt::UpscalerKind::Xess: return "XeSS";
+        case pt::UpscalerKind::MetalFx: return "MetalFX";
         default: return pt::UpscalerName(kind);
         }
     }
@@ -3169,7 +3221,8 @@ private:
     std::vector<pt::UpscalerKind> Upscalers(std::vector<std::string>* notes) const {
         std::vector<pt::UpscalerKind> kinds{pt::UpscalerKind::Off};
         if (notes) notes->assign(1, std::string());
-        for (const pt::UpscalerKind kind : {pt::UpscalerKind::Fsr, pt::UpscalerKind::Fsr4, pt::UpscalerKind::Dlss, pt::UpscalerKind::Xess}) {
+        for (const pt::UpscalerKind kind : {pt::UpscalerKind::Fsr, pt::UpscalerKind::Fsr4, pt::UpscalerKind::Dlss, pt::UpscalerKind::Xess,
+                                            pt::UpscalerKind::MetalFx}) {
             std::string reason;
             const bool available = app_.scene.UpscalerAvailable(kind, reason);
             kinds.push_back(kind);
@@ -3605,6 +3658,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
     pt::game::VfxScene vfx_scene;
     if (vfx_pass.Init(app.renderer, app.textures, vfs)) {
         app.scene.vfx_forward = [&vfx_pass](const pt::SceneVfxContext& c) { vfx_pass.RecordForward(c); };
+        app.scene.vfx_liquid_depth = [&vfx_pass](const pt::SceneVfxContext& c) { vfx_pass.RecordLiquidDepth(c); };
         app.scene.vfx_filter = [&vfx_pass](const pt::SceneFilterContext& c) { vfx_pass.RecordFilter(c); };
     }
     pt::game::RenderSceneBuilder scene_builder;
@@ -3868,7 +3922,46 @@ int RunGame(App& app, pt::Vfs& vfs) {
     // the player's own footsteps (Play_plr_footstep_*), felt on the DualSense actuators but not played on its speaker
     constexpr std::array<uint32_t, 7> kPlayerStepEvents{0x28E58AD8u, 0xF688B813u, 0xF688B80Du, 0x07F2CC27u,
                                                         0xC180CD50u, 0x07F2CC39u, 0x6A89341Eu};
+    // Windows HDR for the window's display, read once a second off the game's thread (DXGI, os.h WindowDisplayHdr): switched
+    // while the game runs, the swapchain is made again with the output the display now offers. The driver usually reports the
+    // change as an out of date swapchain as well; this covers the drivers that do not
+    std::atomic<int> display_hdr{-1};
+    std::jthread display_hdr_poll;
+    if (app.window) {
+        void* hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(app.window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+        if (hwnd) {
+            display_hdr_poll = std::jthread([hwnd, &display_hdr](std::stop_token stop) {
+                while (!stop.stop_requested()) {
+                    const std::optional<bool> on = pt::os::WindowDisplayHdr(hwnd);
+                    display_hdr.store(on ? (*on ? 1 : 0) : -1);
+                    for (int i = 0; i < 10 && !stop.stop_requested(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            });
+        }
+    }
+    int display_hdr_seen = -1;
+    // PT_TEST_HDR_TOGGLE=a,b,...: the HDR setting switched at those frames (tests of the output change while running)
+    std::vector<uint64_t> hdr_toggle_frames;
+    if (const char* toggles = std::getenv("PT_TEST_HDR_TOGGLE")) {
+        for (std::string_view rest = toggles; !rest.empty();) {
+            const size_t comma = rest.find(',');
+            hdr_toggle_frames.push_back(std::strtoull(std::string(rest.substr(0, comma)).c_str(), nullptr, 10));
+            rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
+        }
+    }
     while (running) {
+        if (!hdr_toggle_frames.empty() && frame >= hdr_toggle_frames.front()) {
+            hdr_toggle_frames.erase(hdr_toggle_frames.begin());
+            app.settings.display.hdr = !app.settings.display.hdr;
+            app.renderer.SetHdr(app.settings.display.hdr);
+        }
+        if (const int now = display_hdr.load(); now >= 0 && now != display_hdr_seen) {
+            if (display_hdr_seen >= 0) {
+                pt::LogInfo("display: Windows HDR turned {} for this display", now ? "on" : "off");
+                app.renderer.RecheckOutput();
+            }
+            display_hdr_seen = now;
+        }
         // VR: the headset is the view, a minimized window does not stop it; the frame wait paces the loop. While the runtime has
         // no running session (the headset asleep or not yet ready, its compositor restarting) the game holds as a window in the
         // background does
@@ -4097,7 +4190,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
             }
         }
         const bool ending_outro = pt::game::EndingOutroInputBlocked(game.Controller().Step());
-        polled = pt::game::GateEndingOutroInput(game.Controller().Step(), polled);
+        // the free camera and the photo mode keep their controls during the ending (the game itself gets none, Game::Update):
+        // the gate had zeroed their movement, look and panel input, so both opened but did nothing there
+        if (!freecam && !photo_mode) polled = pt::game::GateEndingOutroInput(game.Controller().Step(), polled);
         if (options.forced_prompts) {
             polled.prompts = *options.forced_prompts;
         }
@@ -4131,7 +4226,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
         pending_input.right_click = pending_input.right_click || polled.right_click;
         pending_input.house_pressed = pending_input.house_pressed || polled.house_pressed;
         pending_input.pointer_valid = false;
-        if (app.window && !mouse_captured && !ending_outro) {
+        if (app.window && !mouse_captured && (!ending_outro || photo_mode)) {
             float x = 0.0f;
             float y = 0.0f;
             SDL_GetMouseState(&x, &y);
@@ -4180,19 +4275,16 @@ int RunGame(App& app, pt::Vfs& vfs) {
             pt::LogInfo("extras: photo camera at ({:.2f} {:.2f} {:.2f}) looking at ({:.2f} {:.2f} {:.2f})", view->first.x, view->first.y,
                         view->first.z, view->second.x, view->second.y, view->second.z);
         }
+        // the ending demo blocks the player's input (its mouse jitter), not the free camera or the photo mode (issue #51)
         if (const int request = game.TakeFreeCameraRequest(); request != 0) {
-            if (ending_outro) {
-                stop_freecam();
-            } else if (request == 1) {
+            if (request == 1) {
                 start_freecam();
             } else {
                 stop_freecam();
             }
         }
         if (const int request = game.TakePhotoModeRequest(); request != 0) {
-            if (ending_outro) {
-                stop_freecam();
-            } else if (request == 1 || request == 2) {
+            if (request == 1 || request == 2) {
                 start_photo();
                 photo_overlay = request == 1;
             } else {
@@ -4205,8 +4297,19 @@ int RunGame(App& app, pt::Vfs& vfs) {
             static bool f7_was_down = false;
             static bool h_was_down = false;
             static bool p_was_down = false;
-            const bool usable = keyboard_free && !show_settings && !(ui_ready && ui.MenuOpen()) && app.extras_request == 0 && !vr &&
-                                !ending_outro;
+            static bool f8_was_down = false;
+            static bool f9_was_down = false;
+            // the capture pose (Game::LogCapturePose): a report's exact camera for a reference shot
+            if (keys[SDL_SCANCODE_F9] && !f9_was_down && keyboard_free) {
+                game.LogCapturePose(game.ViewCamera());
+            }
+            f9_was_down = keys[SDL_SCANCODE_F9];
+            // the mods' inspector (Game::LogModInspect), only with a mod installed
+            if (keys[SDL_SCANCODE_F8] && !f8_was_down && keyboard_free && pt::mods::Active()) {
+                game.LogModInspect(game.ViewCamera());
+            }
+            f8_was_down = keys[SDL_SCANCODE_F8];
+            const bool usable = keyboard_free && !show_settings && !(ui_ready && ui.MenuOpen()) && app.extras_request == 0 && !vr;
             const bool f6 = keys[SDL_SCANCODE_F6] && !f6_was_down && usable;
             const bool f7 = keys[SDL_SCANCODE_F7] && !f7_was_down && usable;
             const bool h = keys[SDL_SCANCODE_H] && !h_was_down && usable;
@@ -4509,15 +4612,23 @@ int RunGame(App& app, pt::Vfs& vfs) {
             recognizer.reset();
         }
         if (hearing && recognizer) {
+            bool microphone_opening = false;
             if (!microphone.IsOpen() && !microphone_failed && !voice_file) {
-                microphone_failed = !microphone.Open(pt::VoiceRecognizer::kSampleRate, app.settings.voice.device);
-                recognizer->Reset();
-                mic_quiet_seconds = 0.0f;
-                if (microphone_failed) pt::LogError("voice: no microphone to listen with");
+                const auto state = microphone.OpenAsync(pt::VoiceRecognizer::kSampleRate, app.settings.voice.device);
+                microphone_opening = state == pt::Microphone::AsyncState::Pending;
+                if (state != pt::Microphone::AsyncState::Pending) {
+                    microphone_failed = state == pt::Microphone::AsyncState::Failed;
+                    recognizer->Reset();
+                    mic_quiet_seconds = 0.0f;
+                    if (microphone_failed) pt::LogError("voice: no microphone to listen with");
+                }
             }
             // why nothing is heard, for the test page: the row's value is the short key, the hint the long one
             const pt::VoiceRecognizer::State state = recognizer->GetState();
-            if (microphone_failed) {
+            if (microphone_opening) {
+                app.microphone_status = "pc_mic_waiting";
+                app.microphone_reason = "pc_mic_st_loading";
+            } else if (microphone_failed) {
                 app.microphone_status = "pc_mic_unavailable";
                 app.microphone_reason = "pc_mic_st_nomic";
             } else if (state == pt::VoiceRecognizer::State::Failed) {
@@ -4845,9 +4956,13 @@ int RunGame(App& app, pt::Vfs& vfs) {
             static bool was_distorting = false;
             if (view_distortion != was_distorting) {
                 was_distorting = view_distortion;
-                pt::LogInfo("upscale: view distortion {} (history reset every frame while on)", view_distortion ? "on" : "off");
+                pt::LogInfo("upscale: view distortion {} (history reset, frame reactive while on)", view_distortion ? "on" : "off");
+                app.scene.ResetUpscaleHistory();
             }
-            if (view_distortion) app.scene.ResetUpscaleHistory();
+            // the f120 view tearing moves blocks of the picture each frame without motion vectors: the history is reset when it
+            // starts and ends, and the frame is reactive while it runs. Resetting it every frame left the upscaler a single
+            // jittered frame, which looked like no anti-aliasing at all (FXAA)
+            app.scene.SetUpscaleReactiveFrame(view_distortion);
             const auto part_t3 = std::chrono::steady_clock::now();
             struct PartsTrace {
                 std::vector<std::array<float, 7>> rows;
@@ -5093,6 +5208,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
     sound.Shutdown();
     vkDeviceWaitIdle(app.renderer.Context().device);
     app.scene.vfx_forward = nullptr;
+    app.scene.vfx_liquid_depth = nullptr;
     app.scene.vfx_filter = nullptr;
     vfx_pass.Shutdown();
     app.renderer.overlay = nullptr;
@@ -5148,6 +5264,8 @@ int main(int argc, char** argv) {
         }
     }
     g_output_dir = log_path.parent_path();
+    // the crashed session's log, kept beside its dump before this start rewrites it (crash_upload.h)
+    if (!tool) pt::PreserveCrashLog(log_path);
     pt::LogSetFile(log_path);
     // PT_HEADLESS_ONLY (set by the workers' slot limiter, C:/Projects/pt-port/shared/ptslot.py): a run that would open a
     // window or a message box stops here, before SDL starts video (tools/run_guard_check.py)
@@ -5227,6 +5345,10 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     // a minidump and a last line for every way the process ends that it controls (crash_report.h); the dumps go next to pt.log
     pt::InstallCrashReporting(g_output_dir, PT_BUILD_ID);
+    // PT_CRASH_UPLOAD_TEST=1: the crash report upload of a headless run, with the consent file's "always" (tests only)
+    if (std::getenv("PT_CRASH_UPLOAD_TEST")) {
+        pt::OfferCrashUpload(g_output_dir.empty() ? std::filesystem::path(".") : g_output_dir, std::string(pt::update::CurrentVersion()), false);
+    }
     // PT_TEST_CRASH=access|terminate|purecall|abort: exercise a crash path (the dump and the last lines; tests only)
     if (const char* test = std::getenv("PT_TEST_CRASH")) {
         const std::string kind = test;
@@ -5286,7 +5408,17 @@ int main(int argc, char** argv) {
     if (game_dir != options.game_dir) {
         pt::LogInfo("game files found at {}", pt::os::PathToUtf8(game_dir));
     }
-    if (!vfs.Mount(game_dir)) {
+    const bool mounted = vfs.Mount(game_dir);
+    if (const int missing = mounted ? vfs.MissingCorePackages() : 0; missing > 0 && !options.headless) {
+        // a folder with a chunk1.psarc that is not P.T.'s, or a partial one: the game would load nothing and close silently
+        startup_failure(std::format("The game files in\n{}\nare not a complete P.T. (CUSA01127): {} of the 12 packages every loop needs "
+                                    "are missing from chunk1.psarc.",
+                                    pt::os::PathToUtf8(std::filesystem::absolute(game_dir)), missing),
+                        "Run the setup again and pick your own P.T. package (the .pkg) or a full CUSA01127 dump. Files from another "
+                        "game, another release's partial download or a re-packed archive do not work.");
+        return 1;
+    }
+    if (!mounted) {
         if (!options.headless) {
 #ifdef __APPLE__
             const std::string text = "The P.T. game files were not found in\n" + pt::os::PathToUtf8(std::filesystem::absolute(game_dir)) +
@@ -5318,7 +5450,18 @@ int main(int argc, char** argv) {
         return RunFox2Test(vfs, options.fox2_test);
     }
 
-    if (!SDL_Init(options.headless ? (options.virtual_pads ? SDL_INIT_GAMEPAD : 0) : (SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO))) {
+    // each subsystem timed on its own: a player's start waited 98 s here (1.0.2), in one of the three
+    const auto sdl_init_started = std::chrono::steady_clock::now();
+    bool sdl_ready = SDL_Init(options.headless ? 0 : SDL_INIT_VIDEO);
+    for (const auto& [flag, name] : {std::pair{SDL_INIT_GAMEPAD, "gamepad"}, std::pair{SDL_INIT_AUDIO, "audio"}}) {
+        if (!sdl_ready || (options.headless && (flag != SDL_INIT_GAMEPAD || !options.virtual_pads))) continue;
+        const auto started = std::chrono::steady_clock::now();
+        sdl_ready = SDL_InitSubSystem(flag);
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        if (seconds > 2.0) pt::LogWarn("SDL_Init: the {} subsystem took {:.1f} s to start", name, seconds);
+    }
+    pt::LogInfo("SDL_Init: {:.2f} s", std::chrono::duration<double>(std::chrono::steady_clock::now() - sdl_init_started).count());
+    if (!sdl_ready) {
         pt::LogError("SDL_Init: {}", SDL_GetError());
         pt::LogError("SDL_Init: {}", pt::SdlVideoDiagnostics());
         // only the window is needed to start: a missing audio or gamepad backend must not end the game (1.0.1 on Linux did)
@@ -5334,6 +5477,8 @@ int main(int argc, char** argv) {
     }
     if (!options.headless) {
         pt::LogSdlVideoInUse();
+        // a crash of an earlier session: asks once whether to send its dump and log to the developer
+        pt::OfferCrashUpload(g_output_dir.empty() ? std::filesystem::path(".") : g_output_dir, std::string(pt::update::CurrentVersion()), true);
     }
     // a headless run without --settings keeps the defaults, never an installation's own pt.ini
     app.settings_path = !options.settings_path.empty() ? options.settings_path

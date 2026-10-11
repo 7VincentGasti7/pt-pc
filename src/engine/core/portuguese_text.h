@@ -18,7 +18,7 @@ inline constexpr Text kMenu[] = {
     {"pc_unlimited","Sem limite"},
     {"pc_note_fps_limit","Limita os fotogramas renderizados. Os menus continuam limitados a 60 FPS. A sincronização vertical pode impor um limite inferior."},
     {"pc_hdr","HDR nativo"},
-    {"pc_note_hdr_restart","Aplicado no próximo arranque. Requer HDR ativo num ecrã compatível; caso contrário, é usado SDR."},
+    {"pc_note_hdr_restart","Aplicado de imediato. Requer HDR ativo para o ecrã no Windows; caso contrário, é usado SDR."},
     {"pc_surround","Saída surround"},
     {"pc_note_surround","Após reiniciar, usa a disposição 5.1 ou 7.1 da saída. Os dispositivos estéreo continuam em estéreo."},
     {"pc_rumble_profile","Modo de vibração"},

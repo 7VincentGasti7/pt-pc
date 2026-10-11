@@ -57,6 +57,10 @@ constexpr uint16_t kSubtitleList = 118;
 constexpr uint16_t kVerticalRow = 79;
 constexpr uint16_t kGaugeGroup = 40;
 constexpr glm::vec2 kEntryAt{32.0f, -26.0f};
+// the hover bars' centres from the buttons' text nodes (Back's and Quit's text starts at the node, PC Settings' row label is
+// laid out from the row's far side)
+constexpr glm::vec2 kButtonBarShift{3.0f, 0.0f};
+constexpr glm::vec2 kEntryBarShift{-15.5f, 0.0f};
 constexpr float kStreetReturnY = -24.0f;
 constexpr float kSwitchOut = 9.0f;
 constexpr float kSwitchIn = 13.0f;
@@ -168,6 +172,23 @@ bool OptionsMenu::Init(UiAssets& assets) {
     bar_image.translate.x = 0.0f;
     bar_image.translate.y = 0.0f;
     derived_->AddNode(std::move(bar_image), StrCode64("option_language_bar_image"));
+    // the hover bars of PC Settings, Back and Quit: copies of the language bar centred on each line's text
+    auto button_bar = [&](uint16_t label, glm::vec2 centre, std::string_view name) {
+        ui::UifNode node = *derived_->FindById(80);
+        const ui::UifNode& text = *derived_->FindById(label);
+        node.parent = text.parent;
+        node.translate = glm::vec4(glm::vec2(text.translate) + centre, 0.0f, 0.0f);
+        const uint16_t id = derived_->AddNode(std::move(node), StrCode64(std::format("option_{}_bar", name)));
+        ui::UifNode image = *derived_->FindById(81);
+        image.parent = derived_->IndexOfId(id);
+        image.translate.x = 0.0f;
+        image.translate.y = 0.0f;
+        derived_->AddNode(std::move(image), StrCode64(std::format("option_{}_bar_image", name)));
+        return id;
+    };
+    entry_bar_ = button_bar(entry_label_, kEntryBarShift, "entry");
+    back_bar_ = button_bar(kBack, kButtonBarShift, "back");
+    quit_bar_ = button_bar(quit_label_, kButtonBarShift, "quit");
     pc_.Build(*derived_, icon_atlas, icon_glow);
     prompt_nodes_ = {
         {kBrightnessIcon, kBrightnessGlow, {PromptButton::DpadLeftRight, KeyAction::PadLeft, KeyAction::PadRight}},
@@ -258,6 +279,7 @@ float OptionsMenu::TrackAlpha(std::string_view animation, float frame) const {
 }
 
 void OptionsMenu::SwitchPage(Game& game, Page page) {
+    LogDebug("ui: options page switch to {}", page == Page::Pc ? "PC" : "original");
     if (switch_frame_ >= 0.0f || page == page_ || (page == Page::Pc && !pc_source_)) {
         return;
     }
@@ -580,6 +602,16 @@ void OptionsMenu::Update(Game& game, const MenuInput& raw_input, float dt) {
     if (state_ == State::SetIn && !Playing("UI_sys_opt_setin")) {
         state_ = State::Active;
     }
+    {
+        // the hover bars only on the original page while it takes input
+        const bool shown = page_ == Page::Original && state_ == State::Active && !switching;
+        if (!shown) hovered_ = Button::None;
+        const float flash = SelectionFlash(hover_frame_);
+        for (const auto& [bar, button] : {std::pair{entry_bar_, Button::PcSettings}, std::pair{back_bar_, Button::Back}, std::pair{quit_bar_, Button::Quit}}) {
+            view_.State(bar).visible = shown && hovered_ == button;
+            view_.State(bar).color = glm::vec4(1.0f, 1.0f, 1.0f, flash);
+        }
+    }
     if (state_ == State::Active && !switching) {
         if (page_ == Page::Pc) {
             const auto result = pc_.Update(game, input, dt);
@@ -636,6 +668,16 @@ void OptionsMenu::StreetReturn(Game& game) {
 void OptionsMenu::UpdateOriginal(Game& game, const MenuInput& raw_input, float dt) {
     MenuInput input = raw_input;
     street_shown_ = game.StreetWalkActive();
+    // the pointer over PC Settings, Back or Quit: the bar behind it and the cursor sound, as a row the pad moves to
+    if (input.pointer_valid) {
+        const Button over = ButtonAt(input.pointer);
+        if (over != hovered_) {
+            hovered_ = over;
+            hover_frame_ = 0.0f;
+            if (over != Button::None && game.Audio()) game.Audio()->PostEvent(kCursorSound, nullptr);
+        }
+    }
+    hover_frame_ += dt * 30.0f;
     if (street_shown_ && input.street_return) {
         StreetReturn(game);
         return;
@@ -736,6 +778,20 @@ void OptionsMenu::UpdateOriginal(Game& game, const MenuInput& raw_input, float d
         close_pending_ = false;
         Close();
     }
+}
+
+OptionsMenu::Button OptionsMenu::ButtonAt(glm::vec2 units) const {
+    if (street_shown_) {
+        const glm::vec2 street = view_.WorldPosition(street_label_);
+        if (units.x >= street.x - 6.0f && units.x <= street.x + 22.0f && std::abs(units.y - street.y) <= 1.2f) return Button::StreetReturn;
+    }
+    const glm::vec2 quit = view_.WorldPosition(quit_label_);
+    if (units.x >= quit.x - 6.0f && units.x <= quit.x + 15.0f && std::abs(units.y - quit.y) <= 1.2f) return Button::Quit;
+    const glm::vec2 entry = view_.WorldPosition(entry_group_);
+    if (pc_source_ && units.x >= entry.x - 22.0f && units.x <= entry.x + 12.0f && std::abs(units.y - entry.y) <= 1.5f) return Button::PcSettings;
+    const glm::vec2 back = view_.WorldPosition(kBack);
+    if (units.x >= back.x - 3.0f && units.x <= back.x + 10.0f && std::abs(units.y - back.y) <= 2.0f) return Button::Back;
+    return Button::None;
 }
 
 void OptionsMenu::OriginalClick(Game& game, glm::vec2 units, MenuInput& input) {

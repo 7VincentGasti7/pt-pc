@@ -18,7 +18,7 @@ inline constexpr Text kMenu[] = {
     {"pc_unlimited","Bez omezení"},
     {"pc_note_fps_limit","Omezuje vykreslené snímky. Nabídky zůstávají omezené na 60 FPS. Vertikální synchronizace může nastavit nižší limit."},
     {"pc_hdr","Nativní HDR"},
-    {"pc_note_hdr_restart","Použije se při příštím spuštění. Vyžaduje zapnuté HDR na kompatibilním displeji; jinak se použije SDR."},
+    {"pc_note_hdr_restart","Použije se okamžitě. Vyžaduje zapnuté HDR pro displej ve Windows; jinak se použije SDR."},
     {"pc_surround","Prostorový zvuk"},
     {"pc_note_surround","Po restartu použije rozložení 5.1 nebo 7.1 výstupního zařízení. Stereofonní zařízení zůstávají stereofonní."},
     {"pc_rumble_profile","Režim vibrací"},

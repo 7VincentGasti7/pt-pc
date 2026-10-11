@@ -30,6 +30,9 @@ struct PlayerFrameContext {
     bool invert_x = false;
     bool invert_y = false;
     bool peephole_theater = false;
+    // the hole's direction as a player yaw: the look limits are centred on it (peephole_look_f110), not on the yaw at the start
+    bool peephole_center_valid = false;
+    float peephole_center_yaw = 0.0f;
 };
 
 class PadLocks {

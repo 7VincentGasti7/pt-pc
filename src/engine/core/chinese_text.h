@@ -18,7 +18,7 @@ inline constexpr Text kMenu[] = {
     {"pc_unlimited","不限制"},
     {"pc_note_fps_limit","限制渲染帧数。菜单仍限制为 60 FPS。垂直同步可能会施加更低的上限。"},
     {"pc_hdr","原生 HDR"},
-    {"pc_note_hdr_restart","下次启动时生效。需要在兼容显示器上启用 HDR；否则使用 SDR。"},
+    {"pc_note_hdr_restart","立即生效。需要在 Windows 中为该显示器开启 HDR；否则使用 SDR。"},
     {"pc_surround","环绕声输出"},
     {"pc_note_surround","重启后使用输出设备的 5.1 或 7.1 声道布局。立体声设备仍使用立体声。"},
     {"pc_rumble_profile","振动模式"},

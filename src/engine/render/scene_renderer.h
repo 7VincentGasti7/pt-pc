@@ -202,6 +202,8 @@ public:
     void Render(const Camera& camera, const std::vector<DrawItem>& items);
     // the next frame's temporal upscaler starts without history
     void ResetUpscaleHistory() { up_.reset = true; }
+    // the whole frame reactive (the upscaler trusts the current frame over its history) while set
+    void SetUpscaleReactiveFrame(bool on) { reactive_frame_ = on; }
     void Render(const Camera& camera, const std::vector<DrawItem>& items, const SceneLighting& lighting, float dt);
     void DrawDebugUi();
     void ResetExposure() { adaptation_valid_ = false; }
@@ -228,6 +230,8 @@ public:
     static constexpr uint32_t kShadowTile = 2048;
     static constexpr uint32_t kShadowAtlasSize = 8192;
     std::function<void(const SceneVfxContext&)> vfx_forward;
+    // the opaque liquids' depth after the effect pass (VfxPass::RecordLiquidDepth), so the depth of field takes them where they are
+    std::function<void(const SceneVfxContext&)> vfx_liquid_depth;
     std::function<void(const SceneFilterContext&)> vfx_filter;
     const RenderStats& Stats() const { return stats_; }
     UpscaleSettings upscale;
@@ -381,12 +385,22 @@ private:
     void WriteUpscaleDescriptors(VkDescriptorImageInfo* images, bool post);
     bool BeginUpscaleFrame(VkExtent2D output);
     bool SetupUpscaler(VkExtent2D output);
+    // the upscale split into the pass's pieces, for the backends that run outside the Vulkan command buffer (Apple MetalFX):
+    // Prepare records the inputs' barriers and exposure, Dispatch runs a Vulkan-recorded backend, Resolve reads the upscaler's
+    // output. RecordUpscale calls all three on the frame's command buffer; the external path calls Prepare, submits, runs the
+    // backend, then Resolve on the resume buffer.
+    void RecordUpscalePrepare(float dt);
+    bool RecordUpscaleDispatch();
+    void PrepareFrameGeneration(const UpscaleDispatch& d, bool upscaled);
+    void RecordUpscaleResolve(VkCommandBuffer cmd, bool upscaled);
     void RecordOpaqueSnapshot(VkCommandBuffer cmd, RenderTarget& output);
     void RecordSceneCopy(VkCommandBuffer cmd, RenderTarget& output);
     void RecordDumpCopy(VkCommandBuffer cmd, RenderTarget& target, vk::Buffer& buffer);
     void RecordEffects(VkCommandBuffer cmd, RenderTarget& output, SceneVfxContext context);
     void RecordUpscaleInputs(VkCommandBuffer cmd, const ViewSetup& view);
     void RecordUpscale(VkCommandBuffer cmd, float dt);
+    // the dispatch RecordUpscalePrepare built, for the backend that runs outside the Vulkan command buffer
+    UpscaleDispatch up_dispatch_;
     void ReadUpscaleTimestamps(FrameSlot& slot);
 
     // 0 start, 1 shadows, 2 mirror, 3 G-buffer, 4 lighting, 5 compose, forward and effects, 6 end; within them 7 the forward draws,
@@ -650,6 +664,11 @@ private:
     Camera last_camera_;
     bool has_last_camera_ = false;
     glm::mat4 previous_view_projection_{1.0f};
+    // the motion blur's previous camera: the camera's motion smoothed over about 50 ms (UpdateMotion), not the last frame's
+    glm::mat4 blur_previous_view_projection_{1.0f};
+    glm::vec4 blur_rates_{0.0f};          // yaw, pitch, roll per second
+    glm::vec3 blur_velocity_{0.0f};       // metres per second
+    bool blur_rates_valid_ = false;
     double frame_time_ = 1.0 / 60.0;
     uint32_t frame_counter_ = 0;
     RenderStats stats_;
@@ -673,6 +692,7 @@ private:
         bool warp_test = false;
         bool warp_history = false;
         std::string failed_key;
+        std::chrono::steady_clock::time_point failed_at{};
     } up_;
     uint32_t post_view_ = 0;
     bool post_bindings_ = false;
@@ -726,6 +746,7 @@ private:
     std::map<std::string, std::string> shadow_reasons_;
     std::chrono::steady_clock::time_point previous_frame_start_{};
     int vr_eye_ = -1;
+    bool reactive_frame_ = false;
 };
 
 }

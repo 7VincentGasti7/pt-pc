@@ -299,7 +299,8 @@ void Player::LocomotionFrame(const PlayerFrameContext& context) {
 
 void Player::UpdateLook(float dt, const InputState& input, const PlayerFrameContext& context) {
     if (context.peephole_theater && !peephole_look_active_) {
-        peephole_yaw_ = yaw;
+        // PS4 (peephole_look_f110): from a start at 8.8 degrees the view reaches -14.8 and +15.3, +-15 round the hole's axis
+        peephole_yaw_ = context.peephole_center_valid ? context.peephole_center_yaw : yaw;
         look_velocity_ = glm::vec2(0.0f);
     }
     peephole_look_active_ = context.peephole_theater;

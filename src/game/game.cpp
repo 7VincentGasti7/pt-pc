@@ -26,8 +26,9 @@ namespace {
 
 constexpr double kGameFrame = 1.0 / 30.0;
 constexpr float kBrowseFadeSeconds = 0.5f;
-// the ending demo frame the street walk keeps as scenery: the wide shot of the street after the close-up (5700), before the white fade
-constexpr double kStreetSceneryFrame = 5760.0;
+// the ending demo frame the street walk keeps as scenery: the street's first shots (#53). The final wide shot (5760) greys the
+// whole street with haze; the opening's lights keep it dark with the orange fog at its far end
+constexpr double kStreetSceneryFrame = 2900.0;
 // the street walk: where the outro's man walks at that frame, facing down the street, and the walls around the straight street
 // (ending file space x and z; the building fronts stand at about x -19 and 12.5, the ground ends at z -14)
 const glm::vec3 kStreetSpawn(-1.15f, 0.05f, 27.0f);
@@ -298,6 +299,16 @@ void Game::Update(float dt, const InputState& pad_input) {
         context.invert_x = options_.invert_x;
         context.invert_y = options_.invert_y;
         context.peephole_theater = nazo_.IsPeepholeTheaterActive();
+        if (glm::mat4 hole; context.peephole_theater && nazo_.PeepholeTransform(hole)) {
+            // the asset's z axis, or its reverse, whichever the view faces: as a player yaw (forward = -sin, -cos)
+            const glm::vec3 axis = glm::normalize(glm::vec3(hole[2].x, 0.0f, hole[2].z));
+            constexpr float pi = 3.14159265f;
+            const auto wrap = [](float a) { return std::remainder(a, 2.0f * pi); };
+            float center = wrap(std::atan2(axis.x, axis.z) - pi);
+            if (std::abs(wrap(center - player_.yaw)) > pi / 2) center = wrap(center + pi);
+            context.peephole_center_valid = true;
+            context.peephole_center_yaw = center;
+        }
         if (!demo_control) {
             player_.Update(dt, input, collision_, context);
             // the camera plugin's zoom-out branch (0x984A62) calls AbortPeephole once in every game frame the zoom falls; the
@@ -482,7 +493,9 @@ void Game::AddMirrorBody(std::vector<DrawItem>& out) {
         glm::vec3 flash, dir, right, up;
         // the aim point turned with the frame about the eye
         const glm::vec3 aim = own.position + glm::angleAxis(yaw_back, glm::vec3(0.0f, 1.0f, 0.0f)) * (light_aim_ - own.position);
-        HandyLightPose(own, aim, handy_hold_, handy_demo_, flash, dir, &right, &up);
+        // the hand keeps the light's free pose: near a wall the light is pulled back toward the body (handy_hold_), and a hand that
+        // followed it bent the arm through itself and swung the flashlight into the head in the third person view
+        HandyLightPose(own, aim, 0.0f, handy_demo_, flash, dir, &right, &up);
         const glm::mat4 aim_reference = glm::inverse(frame(ref_right, ref_up, ref_dir, ref_flash));
         grip_hand = frame(right, up, dir, flash) * aim_reference * hand_world;
         const glm::vec3 fist(aim_reference * hand_world * glm::vec4(kFist, 1.0f));
@@ -1492,7 +1505,7 @@ float Game::PlayerHeightAboveStageRoot() const {
 // have no movement hull (geom node 0), only the detailed node 1 surfaces over the models' vertices, which the walk adds to the
 // player's world (StageManager::PrepareWalkSurfaces) inside invisible walls around the straight street (the ground ends 1.5 m past
 // both short sides, and the side streets and the bend lead out of the visible street). The look is the ending demo's: it is held
-// as silent scenery at the frame of its wide street shot (DemoSystem::PlayScenery: its lights, fog, tone and exposure, cars and
+// as silent scenery at a frame of its first street shots (DemoSystem::PlayScenery: its lights, fog, tone and exposure, cars and
 // effects; no camera, characters, texts or fades). The player is the outro's man in first person: the walk clips of
 // ShPlayer_layers.mtar move the camera as in the hallway.
 bool Game::StartStreetWalk() {
@@ -1981,6 +1994,88 @@ void Game::OnFloorReached(std::string_view floor, int pass) {
     NoteBrowseReached(BrowseIndexOf(floor, pass));
 }
 
+void Game::LogModInspect(const Camera& camera) {
+    const glm::vec3 origin = camera.position;
+    const glm::vec3 dir = camera.Forward();
+    float best = 1e30f;
+    const Stage* best_stage = nullptr;
+    const Stage::Draw* best_draw = nullptr;
+    stages_.ForEachStage(
+        [&](Stage& stage) {
+            if (!stage.active) return;
+            for (const Stage::Draw& draw : stage.draws) {
+                if (!draw.mesh) continue;
+                if (const BodyState* body = stage.FindBody(draw.entity); body && !body->visible) continue;
+                // the ray in the model's own space against its bounds (slab test)
+                const glm::mat4 inverse = glm::inverse(stage.file_to_world * draw.file_transform);
+                const glm::vec3 o = glm::vec3(inverse * glm::vec4(origin, 1.0f));
+                const glm::vec3 d = glm::vec3(inverse * glm::vec4(dir, 0.0f));
+                float t0 = 0.0f, t1 = 1e30f;
+                bool hit = true;
+                for (int a = 0; a < 3 && hit; ++a) {
+                    if (std::abs(d[a]) < 1e-9f) {
+                        hit = o[a] >= draw.mesh->bounds_min[a] && o[a] <= draw.mesh->bounds_max[a];
+                        continue;
+                    }
+                    float n = (draw.mesh->bounds_min[a] - o[a]) / d[a], f = (draw.mesh->bounds_max[a] - o[a]) / d[a];
+                    if (n > f) std::swap(n, f);
+                    t0 = std::max(t0, n);
+                    t1 = std::min(t1, f);
+                    hit = t0 <= t1;
+                }
+                // a box the camera stands in (a room's shell) is not what it looks at
+                if (!hit || t0 <= 0.0f) continue;
+                if (t0 < best) {
+                    best = t0;
+                    best_stage = &stage;
+                    best_draw = &draw;
+                }
+            }
+        },
+        false);
+    LogInfo("mods inspector: ---- (F8) ----");
+    if (Stage* current = stages_.Find("current")) {
+        const glm::vec3 feet = glm::vec3(glm::inverse(current->file_to_world) * glm::vec4(player_.Feet(), 1.0f));
+        LogInfo("mods inspector: you stand in stage {} at [{:.2f}, {:.2f}, {:.2f}] (stage space, for level.json \"at\"), floor {}",
+                current->package_path, feet.x, feet.y, feet.z, floor_.CurrentFloorName());
+    }
+    if (!best_draw) {
+        LogInfo("mods inspector: no model in front of the camera");
+        return;
+    }
+    const glm::vec3 at = glm::vec3(best_draw->file_transform[3]);
+    const std::string name = best_draw->entity && best_draw->file ? best_draw->file->file->EntityName(*best_draw->entity) : "(a mod's added model)";
+    const std::string model = best_draw->entity && best_draw->file ? best_draw->file->file->GetString(*best_draw->entity, "modelFile") : std::string();
+    const size_t bar = name.find_last_of('|');
+    LogInfo("mods inspector: looking at model \"{}\" ({:.1f} m away) in stage {}", bar == std::string::npos ? name : name.substr(bar + 1), best,
+            best_stage->package_path);
+    LogInfo("mods inspector:   full name {}, model file {}, at [{:.2f}, {:.2f}, {:.2f}]", name, model.empty() ? "-" : model, at.x, at.y, at.z);
+    // the lights nearest to the point looked at
+    const glm::vec3 point = origin + dir * best;
+    std::vector<std::pair<float, std::string>> lights;
+    for (const auto& file : best_stage->files) {
+        for (const LightPlacement& l : file->lights) {
+            const glm::vec3 p = glm::vec3(best_stage->file_to_world * l.world[3]);
+            const size_t b = l.name.find_last_of('|');
+            lights.emplace_back(glm::distance(p, point), (b == std::string::npos ? l.name : l.name.substr(b + 1)) + " (" + l.class_name + ")");
+        }
+    }
+    std::sort(lights.begin(), lights.end());
+    for (size_t i = 0; i < lights.size() && i < 4; ++i) {
+        LogInfo("mods inspector:   light \"{}\" {:.1f} m from that point", lights[i].second, lights[i].first);
+    }
+}
+
+void Game::LogCapturePose(const Camera& camera) {
+    const glm::vec3 feet = player_.Feet();
+    const glm::vec3 target = camera.position + camera.Forward() * 3.0f;
+    LogInfo("capture pose: floor {} loop {} step {}, camera ({:.3f} {:.3f} {:.3f}) yaw {:.2f} pitch {:.2f}, feet ({:.3f} {:.3f} {:.3f})",
+            floor_.CurrentFloorName(), floor_.LoopCount(), controller_.Step(), camera.position.x, camera.position.y, camera.position.z,
+            glm::degrees(camera.yaw), glm::degrees(camera.pitch), feet.x, feet.y, feet.z);
+    LogInfo("capture route: goto {:.3f} {:.3f} 240 0.1", feet.x, feet.z);
+    LogInfo("capture route: lookat {:.3f} {:.3f} {:.3f} 60", target.x, target.y, target.z);
+}
+
 void Game::NoteArchive(std::string_view key) {
     if (config_.theater || !IsArchiveUnlockKey(key) || archive_seen_.contains(std::string(key))) {
         return;
@@ -1999,6 +2094,16 @@ bool Game::ArchiveUnlocked(const ArchiveEntry& entry) const {
         return false;
     }
     const std::string key = ArchiveUnlockKey(entry);
+    if (key == "photo:complete") {
+        // every piece and the option frame found, over any number of runs: the completed photo needs them in one run, and the
+        // pieces of a run before its entry existed (1.0.1) or of runs ended early left it locked with all of them unlocked
+        bool all = true;
+        for (const char* piece : {"photo:PhotoLisa", "photo:PhotoTree", "photo:PhotoGap", "photo:PhotoBath", "photo:PhotoStair",
+                                  "photo:PhotoOption"}) {
+            all = all && archive_seen_.contains(piece);
+        }
+        if (all) return true;
+    }
     return archive_seen_.contains(key) || key == "finished" || entry.section == ArchiveSection::Unused;
 }
 

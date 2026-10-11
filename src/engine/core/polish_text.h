@@ -18,7 +18,7 @@ inline constexpr Text kMenu[] = {
     {"pc_unlimited","Bez limitu"},
     {"pc_note_fps_limit","Ogranicza liczbę renderowanych klatek na sekundę. W menu zawsze obowiązuje limit 60 FPS. Synchronizacja pionowa może narzucić niższy limit."},
     {"pc_hdr","Natywny HDR"},
-    {"pc_note_hdr_restart","Zostanie zastosowane po ponownym uruchomieniu. Wymaga włączonej obsługi HDR na zgodnym ekranie; w przeciwnym razie używany jest SDR."},
+    {"pc_note_hdr_restart","Stosowane od razu. Wymaga włączonego HDR dla ekranu w systemie Windows; w przeciwnym razie używany jest SDR."},
     {"pc_surround","Dźwięk przestrzenny"},
     {"pc_note_surround","Po ponownym uruchomieniu korzysta z układu 5.1 lub 7.1 urządzenia wyjściowego. Urządzenia stereo nadal odtwarzają dźwięk dwukanałowy."},
     {"pc_rumble_profile","Tryb wibracji"},
