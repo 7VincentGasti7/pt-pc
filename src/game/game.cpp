@@ -2315,7 +2315,8 @@ void Game::PrepareTheaterLoop(int index) {
     browse_arrived_ = index == 0;
     floor_.SetFloorLevel(loop.previous);
     floor_.ResetLoopCount();
-    if (index >= 8) nazo_.ForceClear(NazoId::XMark);
+    // Loop 8 is the gouge puzzle; only loop 9 (f070) onward implies it was solved.
+    if (index >= BrowseIndexOf("f070", 1)) nazo_.ForceClear(NazoId::XMark);
     if (index >= 12) nazo_.ForceClear(NazoId::Hello);
     if (index >= 14) nazo_.ForceClear(NazoId::Peephole);
     nazo_.CancelPendingClearSound();
@@ -2331,7 +2332,7 @@ bool Game::ApplyBrowseReload() {
     nazo_.ResetAllStates();
     floor_.SetFloorLevel(loop.previous);
     floor_.ResetLoopCount();
-    if (browse_loop_ >= 8) nazo_.ForceClear(NazoId::XMark);
+    if (browse_loop_ >= BrowseIndexOf("f070", 1)) nazo_.ForceClear(NazoId::XMark);
     if (browse_loop_ >= 12) nazo_.ForceClear(NazoId::Hello);
     // f110's peephole sends the player on to f120; a browsed f120 or later starts with it solved, as played progress would
     if (browse_loop_ >= 14) nazo_.ForceClear(NazoId::Peephole);
