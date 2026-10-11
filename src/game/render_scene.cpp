@@ -516,10 +516,19 @@ void RenderSceneBuilder::AddHandyLight(Game& game, const Camera& camera, const g
     const glm::vec3 rgb = light_math::ColorFromTemperature(p.temperature, 0.0f, p.lumen, color);
     const float omega = light_math::SpotSolidAngle(p.umbra_angle, p.penumbra_angle, p.attenuation_exponent);
     l.intensity = rgb / omega * p.power_scale / kPi;
+    // the street walk's flashlight (Game::ToggleStreetFlashlight, a PC addition): the street is metered for its lamps, its
+    // exposure far below the hallway's (EV -8 against about -5): measured on the street's floor, the beam takes about the
+    // hallway's strength with 16 times its intensity (PT_STREET_HANDY_GAIN overrides)
+    static const float street_gain = [] { const char* g = std::getenv("PT_STREET_HANDY_GAIN"); return g ? static_cast<float>(std::atof(g)) : 16.0f; }();
+    if (game.StreetWalkActive()) l.intensity *= street_gain;
     l.source_radius = light_math::SourceRadius(p.light_size);
     l.inner_range = p.inner_range;
     l.outer_range = p.outer_range;
     l.dimmer = p.dimmer;
+    if (game.StreetWalkActive()) {
+        // the street is wider than the hallway the flashlight's 5 m reach was made for: the walls across it are 6 to 10 m away
+        l.outer_range = std::max(l.outer_range, 14.0f);
+    }
     l.cos_outer = CosHalf(p.umbra_angle);
     l.inv_cone_range = InverseRange(CosHalf(p.penumbra_angle), l.cos_outer);
     l.cone_exponent = p.attenuation_exponent;

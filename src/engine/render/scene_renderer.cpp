@@ -416,6 +416,11 @@ bool SceneRenderer::CreatePipelines() {
     screen_fx_ = CreateGraphicsPipeline(device_, post);
     post.fragment = "debug.frag";
     debug_ = CreateGraphicsPipeline(device_, post);
+    post.fragment = "subliminal_string.frag";
+    post.colors = {kPostFormat};
+    post.blend = BlendMode::Additive;
+    subliminal_string_ = CreateGraphicsPipeline(device_, post);
+    post.blend = BlendMode::None;
     post.fragment = "ssao.frag";
     post.colors = {kAoFormat};
     occlusion_ = CreateGraphicsPipeline(device_, post);
@@ -447,7 +452,7 @@ bool SceneRenderer::CreatePipelines() {
                               reflect_colour_, kawase_, bloom_add_, kawase_sum_, gaussian_, tonemap_, fxaa_, dof_ratio_, dof_down_, dof_blur_, dof_blend_, mb_velocity_,
                               mb_tile_pipeline_, mb_bake_pipeline_, mb_mcguire_, mb_composite_, velocity_pipeline_, fsblur_, banding_, screen_fx_,
                               debug_, occlusion_, occlusion_blur_, reflect_make_, reflect_blend_, vfx_composite_, vfx_depth_down_, mirror_temporal_pipeline_,
-                              reflect_layer_pipeline_, reflect_temporal_pipeline_};
+                              reflect_layer_pipeline_, reflect_temporal_pipeline_, subliminal_string_};
     for (VkPipeline p : all) {
         if (!p) {
             LogError("scene renderer: pipeline creation failed");
@@ -462,7 +467,7 @@ void SceneRenderer::DestroyPipelines() {
                          &reflect_colour_, &kawase_, &bloom_add_, &kawase_sum_, &gaussian_, &tonemap_, &fxaa_, &dof_ratio_, &dof_down_, &dof_blur_, &dof_blend_,
                          &mb_velocity_, &mb_tile_pipeline_, &mb_bake_pipeline_, &mb_mcguire_, &mb_composite_, &velocity_pipeline_, &fsblur_,
                          &banding_, &screen_fx_, &debug_, &occlusion_, &occlusion_blur_, &reflect_make_, &reflect_blend_, &vfx_composite_, &vfx_depth_down_,
-                         &mirror_temporal_pipeline_, &reflect_layer_pipeline_, &reflect_temporal_pipeline_};
+                         &mirror_temporal_pipeline_, &reflect_layer_pipeline_, &reflect_temporal_pipeline_, &subliminal_string_};
     for (VkPipeline* p : all) {
         if (*p) {
             vkDestroyPipeline(device_, *p, nullptr);

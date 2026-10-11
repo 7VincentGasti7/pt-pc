@@ -112,17 +112,6 @@ std::optional<Response> Get(const Request& request) {
 }
 
 std::optional<Response> PostForm(const std::string& url_text, const std::vector<FormPart>& form, int timeout_ms) {
-    const std::wstring url = Widen(url_text);
-    URL_COMPONENTS parts{sizeof(parts)};
-    wchar_t host[256] = {}, path[2048] = {};
-    parts.lpszHostName = host;
-    parts.dwHostNameLength = 256;
-    parts.lpszUrlPath = path;
-    parts.dwUrlPathLength = 2048;
-    parts.dwExtraInfoLength = 1;
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS) return std::nullopt;
-    std::wstring resource(path, parts.dwUrlPathLength);
-    if (parts.lpszExtraInfo && parts.dwExtraInfoLength) resource.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
     const std::string boundary = "----pt-port-crash-7f3a9c2e5b1d";
     std::string body;
     for (const FormPart& p : form) {
@@ -136,6 +125,21 @@ std::optional<Response> PostForm(const std::string& url_text, const std::vector<
         body += "\r\n";
     }
     body += "--" + boundary + "--\r\n";
+    return PostBody(url_text, "multipart/form-data; boundary=" + boundary, body, timeout_ms);
+}
+
+std::optional<Response> PostBody(const std::string& url_text, const std::string& content_type, const std::string& body, int timeout_ms) {
+    const std::wstring url = Widen(url_text);
+    URL_COMPONENTS parts{sizeof(parts)};
+    wchar_t host[256] = {}, path[2048] = {};
+    parts.lpszHostName = host;
+    parts.dwHostNameLength = 256;
+    parts.lpszUrlPath = path;
+    parts.dwUrlPathLength = 2048;
+    parts.dwExtraInfoLength = 1;
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS) return std::nullopt;
+    std::wstring resource(path, parts.dwUrlPathLength);
+    if (parts.lpszExtraInfo && parts.dwExtraInfoLength) resource.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
     Handle session{WinHttpOpen(L"pt-port", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
     if (!session.h) return std::nullopt;
     WinHttpSetTimeouts(session.h, timeout_ms, timeout_ms, timeout_ms, timeout_ms);
@@ -143,8 +147,8 @@ std::optional<Response> PostForm(const std::string& url_text, const std::vector<
     if (!connection.h) return std::nullopt;
     Handle req{WinHttpOpenRequest(connection.h, L"POST", resource.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)};
     if (!req.h) return std::nullopt;
-    const std::wstring headers = Widen("Content-Type: multipart/form-data; boundary=" + boundary + "\r\n");
-    if (!WinHttpSendRequest(req.h, headers.c_str(), DWORD(-1), body.data(), DWORD(body.size()), DWORD(body.size()), 0) ||
+    const std::wstring headers = Widen("Content-Type: " + content_type + "\r\n");
+    if (!WinHttpSendRequest(req.h, headers.c_str(), DWORD(-1), const_cast<char*>(body.data()), DWORD(body.size()), DWORD(body.size()), 0) ||
         !WinHttpReceiveResponse(req.h, nullptr)) {
         return std::nullopt;
     }
@@ -167,6 +171,10 @@ std::optional<Response> PostForm(const std::string& url_text, const std::vector<
 #else
 
 std::optional<Response> PostForm(const std::string&, const std::vector<FormPart>&, int) {
+    return std::nullopt;
+}
+
+std::optional<Response> PostBody(const std::string&, const std::string&, const std::string&, int) {
     return std::nullopt;
 }
 

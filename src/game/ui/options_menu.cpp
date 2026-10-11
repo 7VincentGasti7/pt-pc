@@ -571,6 +571,11 @@ void OptionsMenu::Commit(Game& game) {
 }
 
 void OptionsMenu::Update(Game& game, const MenuInput& raw_input, float dt) {
+    {
+        const float target = state_ == State::SetIn || state_ == State::Active ? 1.0f : 0.0f;
+        const float step = dt / 0.25f;
+        pillar_alpha_ = target > pillar_alpha_ ? std::min(target, pillar_alpha_ + step) : std::max(target, pillar_alpha_ - step);
+    }
     if (state_ == State::Closed) {
         return;
     }
@@ -879,6 +884,18 @@ void OptionsMenu::Draw(ui::UiBatch& batch, const UiCanvas& canvas) {
         // an Archive picture over the whole screen, in place of the page
         archive_view_.DrawFullScreen(batch, canvas, *assets_, pc_.Panel(), PcText(pc_.FullScreenHint(), text_language_), text_language_);
         return;
+    }
+    // PC (ultrawide): the menu's page is 16:9 and dark; the screen's sides outside it go black with it instead of showing the
+    // game (Discord report 11 October)
+    if (pillar_alpha_ > 0.0f) {
+        const float left = canvas.origin.x;
+        const float right = canvas.origin.x + UiCanvas::kWidth * canvas.scale;
+        const float width = static_cast<float>(batch.Extent().width);
+        const float height = static_cast<float>(batch.Extent().height);
+        const glm::vec4 black(0.0f, 0.0f, 0.0f, pillar_alpha_);
+        const auto plain = ui::UiDrawParams::Plain(TextureManager::kWhite);
+        if (left > 0.5f) batch.Quad(glm::vec2(0.0f), glm::vec2(left, height), glm::vec2(0.0f), glm::vec2(1.0f), black, plain, ui::UiShade::Solid, ui::UiBlend::Alpha);
+        if (width - right > 0.5f) batch.Quad(glm::vec2(right, 0.0f), glm::vec2(width, height), glm::vec2(0.0f), glm::vec2(1.0f), black, plain, ui::UiShade::Solid, ui::UiBlend::Alpha);
     }
     view_.Draw(batch, canvas, text_language_, 1.0f);
     if (page_ == Page::Pc && pc_.Gallery() != PcGallery::None && settled) {

@@ -556,7 +556,9 @@ uint32_t TextureManager::LoadImageFile(const std::filesystem::path& path, const 
     for (uint32_t level = 0; level < levels.size(); ++level) {
         mips.push_back({std::max(1u, width >> level), std::max(1u, height >> level), levels[level]});
     }
-    return Create(key, VK_FORMAT_R8G8B8A8_SRGB, mips);
+    // UNORM: the UI draws the encoded values as they are, as it does the game's own UI textures (an sRGB view decoded the
+    // title picture to linear and the UI showed that, darker than the PS4's start screen: Discord report 11 October)
+    return Create(key, VK_FORMAT_R8G8B8A8_UNORM, mips);
 }
 
 void TextureManager::ConfigureEnhancedTextures(const QarArchive& qar, const std::filesystem::path& cache, uint64_t model) {

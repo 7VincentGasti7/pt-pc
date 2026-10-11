@@ -1278,10 +1278,13 @@ void SceneRenderer::Fullscreen(VkCommandBuffer cmd, VkPipeline pipeline, const g
 }
 
 void SceneRenderer::RecordRayTracing(VkCommandBuffer cmd) {
-    if (rt_built_frame_ == frame_counter_) {
+    // VR (issue #62): the right eye's ray traced contact shadows, ambient occlusion and reflections had come from its frame
+    // slot's scene of an earlier frame (Lisa in the floor's reflection after she had gone, insects and lights in one eye)
+    uint64_t& built = rt_built_frame_[renderer_->FrameIndex() % Renderer::kFramesInFlight];
+    if (built == frame_counter_) {
         return;
     }
-    rt_built_frame_ = frame_counter_;
+    built = frame_counter_;
     // PT_RT_SKINNED=0 leaves the skinned casters out (tests)
     static const bool skinned = [] {
         const char* env = std::getenv("PT_RT_SKINNED");
@@ -1450,7 +1453,13 @@ void SceneRenderer::RecordGBuffer(VkCommandBuffer cmd, const ViewSetup& view) {
     for (int pass = 0; pass < 2; ++pass) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pass == 0 ? gbuffer_ : decal_);
         if (pass == 1) {
-            vkCmdSetDepthBias(cmd, 1.0f, 0.0f, 1.0f);
+            // The original's decal draws have no polygon offset (bloom_trace_f010 ops 81 to 83, fox3ddf_blin_decal: po 0, depth
+            // test GEQUAL without writes, DB_DEPTH_CONTROL 0x7e2): a decal passes where it lies on or in front of what is drawn.
+            // The port had a constant 1 and slope 1 offset; the slope term grows with a pixel's depth step, so at a low render
+            // resolution and close to a wall at a slant it reached past the 2 cm between the wall and a painting, and the wall's
+            // crack drew over the painting (Discord report, 720p). PT_DECAL_BIAS=1 restores it
+            static const bool legacy_bias = std::getenv("PT_DECAL_BIAS") != nullptr;
+            vkCmdSetDepthBias(cmd, legacy_bias ? 1.0f : 0.0f, 0.0f, legacy_bias ? 1.0f : 0.0f);
         }
         const RenderPass wanted = pass == 0 ? RenderPass::Opaque : RenderPass::Decal;
         // decal meshes carry a layer in mesh flag bits 20 to 23 (the ending street's blood is layer 2 to 4 over the layer 0
@@ -2620,7 +2629,8 @@ void SceneRenderer::Render(const Camera& camera, const std::vector<DrawItem>& it
     rt_reflections_ = rt_ && reflect_make_rt_ && raytracing.reflections && toggles.local_reflections;
     rt_contact_active_ = rt_ && light_contact_ && raytracing.contact_shadows && toggles.shadows;
     rt_ao_active_ = rt_ && rt_ao_trace_ && rt_ao_filter_ && probe_ao_ && raytracing.ambient_occlusion && toggles.probes && EnsureAoTargets();
-    if (!rt_ao_active_) {
+    // VR: the two eyes share the ambient occlusion's history; each eye's would be the other's view, so no history in VR
+    if (!rt_ao_active_ || vr_eye_ >= 0) {
         rt_ao_history_ = false;
     }
     rt_ao_ready_ = false;

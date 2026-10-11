@@ -172,6 +172,8 @@ private:
     bool resume_ = false;
     bool resume_sent_ = false;
     float clock_ = 0.0f;
+    // the black at the sides of a screen wider than 16:9 (ultrawide), faded in and out with the menu
+    float pillar_alpha_ = 0.0f;
 };
 
 }

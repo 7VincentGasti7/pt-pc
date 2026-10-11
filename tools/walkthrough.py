@@ -568,6 +568,22 @@ SCENARIOS = {
             r"demo: gc_p07_030 playing",
         ],
     },
+    # the Game+ notice: "New Game Plus 2/4" once when play reaches a hallway after two finishes, not again after Lisa's kill and
+    # the respawn in the same tier
+    "gameplus_notice": {
+        "optional": True,
+        "gameplus": True,
+        "save": True,
+        "start_floor": "f080",
+        "frames": 14000,
+        "route": ["gameplus_mark", "gameplus_mark", "start", "lisa"],
+        "expect": [
+            r"game\+: finish 2 counted",
+            r"game\+: notice for tier 2 given",
+            r"notice: shown pc_gameplus_notice.2",
+            r"demo: gc_p07_030 playing",
+        ],
+    },
     # one scenario per Game+ tier (PT_GAMEPLUS_TIER forces the tier; each checks its tier's content and the lower tiers'):
     # tier 1, the hallway: the bathtub Lisa in the tub of the bathroom whose sink holds the baby
     "gameplus_tier1": {
@@ -901,6 +917,28 @@ SCENARIOS = {
             r"nazo: TrueEnd heard Jack",
             r"nazo: TrueEnd cleared",
             r"floor: NextFloor f160 -> ending",
+        ],
+    },
+    # the photo mode and the free camera during the ending's outro (issue #51)
+    "pickup_light": {
+        "optional": True,
+        "start_floor": "f040",
+        "frames": 9000,
+        "demo_rate": 1.0,
+        "route": ["start", "pickup_light"],
+        "expect": [
+            r"trap: ShDemoExec gc_p00_030",
+        ],
+    },
+    "ending_photo": {
+        "optional": True,
+        "start_floor": "f120",
+        "frames": 40000,
+        "route": ["f120", "start", "f160", "exit", "ending_photo"],
+        "expect": [
+            r"floor: NextFloor f160 -> ending",
+            r"extras: photo mode on",
+            r"extras: free camera on",
         ],
     },
     "ending": {

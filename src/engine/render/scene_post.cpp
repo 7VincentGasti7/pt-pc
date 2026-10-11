@@ -160,6 +160,13 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
         vfx_filter(FilterContext(cmd, 1u));
         BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
     }
+    if (subliminal_string_state_.value > 0.0f && subliminal_string_) {
+        gpu::PassPush s;
+        s.ids = glm::uvec4(subliminal_string_state_.texture, 0, 0, 0);
+        const float across = output_extent_.height ? (static_cast<float>(output_extent_.width) / static_cast<float>(output_extent_.height)) / (16.0f / 9.0f) : 1.0f;
+        s.f0 = glm::vec4(subliminal_string_state_.position, subliminal_string_state_.value, across);
+        Fullscreen(cmd, subliminal_string_, s);
+    }
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&flare_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
 
@@ -404,7 +411,8 @@ void SceneRenderer::UpdateMotion(const Camera& camera, float dt) {
     // the turn of a single frame varies a lot (its events land unevenly on the frames, the frames' lengths vary), so the blur
     // grew and shrank from one frame to the next: the bright, fine texture of the wet street and the lit floors flickered
     // while the view turned (1.0.3 test; off with motion blur off). The blur takes the camera's motion per second smoothed
-    // over about 50 ms instead, back over the smoothed frame time; the upscaler and the reflections keep the exact frame
+    // over about 100 ms instead (a quick left-right shake keeps a blur through its turns rather than going sharp at each), back
+    // over the smoothed frame time; the upscaler and the reflections keep the exact frame
     if (reference) {
         blur_previous_view_projection_ = previous_view_projection_;
         blur_rates_valid_ = false;
@@ -418,7 +426,7 @@ void SceneRenderer::UpdateMotion(const Camera& camera, float dt) {
         blur_velocity_ = cut ? glm::vec3(0.0f) : velocity;
         blur_rates_valid_ = true;
     } else {
-        const float follow = 1.0f - std::exp(-step / 0.05f);
+        const float follow = 1.0f - std::exp(-step / 0.1f);
         blur_rates_ += (rates - blur_rates_) * follow;
         blur_velocity_ += (velocity - blur_velocity_) * follow;
     }

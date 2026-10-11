@@ -251,6 +251,14 @@ public:
     // the lens flares and the screen sprites); the second eye repeats the first eye's frame (the frame counter, which drives the
     // time, the temporal patterns and the ray tracing structures, does not advance)
     void SetVrEye(int eye) { vr_eye_ = eye; }
+    // the subliminal handwriting of this frame (Draw2D_ShSubliminalString, GameUi): its texture, position and envelope; a
+    // value of 0 draws none. It is added with the lens flares to the scene before the tonemap (subliminal_string.frag)
+    struct SubliminalString {
+        uint32_t texture = 0;
+        glm::vec2 position{0.0f};
+        float value = 0.0f;
+    };
+    void SetSubliminalString(const SubliminalString& s) { subliminal_string_state_ = s; }
 
 private:
     struct FrameSlot {
@@ -540,6 +548,7 @@ private:
     VkPipeline fsblur_ = VK_NULL_HANDLE;
     VkPipeline banding_ = VK_NULL_HANDLE;
     VkPipeline screen_fx_ = VK_NULL_HANDLE;
+    VkPipeline subliminal_string_ = VK_NULL_HANDLE;
     VkPipeline debug_ = VK_NULL_HANDLE;
     VkPipeline reflect_make_ = VK_NULL_HANDLE;
     VkPipeline reflect_blend_ = VK_NULL_HANDLE;
@@ -573,7 +582,9 @@ private:
     uint32_t rt_cull_ = 0x10;
     // rays per lit pixel and shadowed light for soft shadows (rt_shadow.glsl)
     static constexpr uint32_t kRtSoftSamples = 4;
-    uint64_t rt_built_frame_ = ~0ull;
+    // the frame each frame slot's acceleration structures were last built for (they are per slot: in VR the two eyes of one
+    // frame use two slots, and the second eye had traced the first's slot's stale scene)
+    uint64_t rt_built_frame_[Renderer::kFramesInFlight] = {~0ull, ~0ull};
     std::vector<RtCaster> rt_casters_;
     // ray traced contact shadows (12.21): light_contact.frag (the maps and the contact rays) unless light_rt.frag runs
     bool rt_contact_active_ = false;
@@ -664,7 +675,7 @@ private:
     Camera last_camera_;
     bool has_last_camera_ = false;
     glm::mat4 previous_view_projection_{1.0f};
-    // the motion blur's previous camera: the camera's motion smoothed over about 50 ms (UpdateMotion), not the last frame's
+    // the motion blur's previous camera: the camera's motion smoothed over about 100 ms (UpdateMotion), not the last frame's
     glm::mat4 blur_previous_view_projection_{1.0f};
     glm::vec4 blur_rates_{0.0f};          // yaw, pitch, roll per second
     glm::vec3 blur_velocity_{0.0f};       // metres per second
@@ -746,6 +757,7 @@ private:
     std::map<std::string, std::string> shadow_reasons_;
     std::chrono::steady_clock::time_point previous_frame_start_{};
     int vr_eye_ = -1;
+    SubliminalString subliminal_string_state_;
     bool reactive_frame_ = false;
 };
 

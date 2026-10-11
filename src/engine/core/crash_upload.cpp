@@ -3,6 +3,9 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
+#include <format>
+#include <random>
 #include <chrono>
 #include <fstream>
 #include <iterator>
@@ -152,6 +155,62 @@ void OfferCrashUpload(const std::filesystem::path& dir, const std::string& versi
     }
     LogInfo("crash report: sending {}", pending.size());
     std::thread(Upload, std::move(pending), version).detach();
+}
+
+namespace {
+// the same project and key as kMinidumpUrl, through Sentry's envelope endpoint (an event with attachments, no dump needed)
+constexpr const char* kEnvelopeUrl =
+    "https://o4512234559111168.ingest.de.sentry.io/api/4512234589192272/envelope/?sentry_key=59acba0456e2617d53ad958a3be13210";
+std::atomic<int> g_log_report{0};
+}
+
+void SendLogReport(const std::filesystem::path& log, const std::filesystem::path& dir, const std::string& version) {
+    // one at a time; a sent or failed report can be sent again
+    if (g_log_report.exchange(static_cast<int>(LogReportState::Sending)) == static_cast<int>(LogReportState::Sending)) return;
+    LogInfo("log report: sending pt.log{} to the developer", Dumps(dir).empty() ? "" : " and the newest crash dump");
+    std::thread([log, dir, version] {
+        std::mt19937_64 random(std::random_device{}() ^ static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const std::string event_id = std::format("{:016x}{:016x}", random(), random());
+        const std::string event = "{\"event_id\":\"" + event_id + "\",\"level\":\"info\",\"logger\":\"pt-port\",\"message\":{\"formatted\":\"pt.log sent by the player\"}," +
+                                  "\"release\":\"pt-port@" + JsonEscape(version) + "\",\"tags\":{\"report\":\"player\",\"os\":\"" +
+#ifdef _WIN32
+                                  "windows"
+#elif defined(__APPLE__)
+                                  "macos"
+#else
+                                  "linux"
+#endif
+                                  "\"}}";
+        std::string body = "{\"event_id\":\"" + event_id + "\"}\n";
+        body += "{\"type\":\"event\",\"length\":" + std::to_string(event.size()) + "}\n" + event + "\n";
+        const std::string text = ReadFile(log, kMaxLogBytes);
+        body += "{\"type\":\"attachment\",\"length\":" + std::to_string(text.size()) + ",\"filename\":\"pt.log\",\"content_type\":\"text/plain\"}\n" + text + "\n";
+        if (const std::vector<std::filesystem::path> dumps = Dumps(dir); !dumps.empty()) {
+            // the newest dump (the names hold the time) with that session's log when it was kept
+            const std::filesystem::path& dump = dumps.back();
+            const std::string data = ReadFile(dump, 64u << 20);
+            body += "{\"type\":\"attachment\",\"length\":" + std::to_string(data.size()) + ",\"filename\":\"" + JsonEscape(pt::os::PathToUtf8(dump.filename())) +
+                    "\",\"attachment_type\":\"event.minidump\"}\n" + data + "\n";
+            std::filesystem::path crash_log = dump;
+            crash_log.replace_extension(".log");
+            if (Exists(crash_log)) {
+                const std::string old = ReadFile(crash_log, kMaxLogBytes);
+                body += "{\"type\":\"attachment\",\"length\":" + std::to_string(old.size()) + ",\"filename\":\"crash-pt.log\",\"content_type\":\"text/plain\"}\n" + old + "\n";
+            }
+        }
+        const auto response = http::PostBody(kEnvelopeUrl, "application/x-sentry-envelope", body);
+        const bool ok = response && response->status >= 200 && response->status < 300;
+        if (ok) {
+            LogInfo("log report: sent ({})", event_id);
+        } else {
+            LogWarn("log report: not sent ({})", response ? std::to_string(response->status) : std::string("no answer"));
+        }
+        g_log_report = static_cast<int>(ok ? LogReportState::Sent : LogReportState::Failed);
+    }).detach();
+}
+
+LogReportState GetLogReportState() {
+    return static_cast<LogReportState>(g_log_report.load());
 }
 
 }

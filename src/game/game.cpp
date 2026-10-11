@@ -434,6 +434,9 @@ void Game::AddMirrorBody(std::vector<DrawItem>& out) {
     }();
     // the free camera's and the third person view's body (BodyShown) needs no mirror: it draws in the camera view too
     const bool third_person_transition = third_person_ && !FreeView() && third_person_weight_ > 0.0f && player_.handy_light.enable;
+    // the ending: its demo draws its own Henry; the player's body, parked out of the scene, showed in the photo mode's view
+    // until the demo's camera turned to his face
+    if (floor_.CurrentFloorName() == "ending") return;
     if (body_off || !player_.spawned || (!BodyShown() && !third_person_transition && (!effects_.mirror_capture || mirror_viewport_bits_ == 0 || demos_.ControlsPlayer() ||
         nazo_.IsPeepholeTheaterActive()))) {
         static const bool trace = std::getenv("PT_MIRROR_TRACE") != nullptr;
@@ -463,8 +466,12 @@ void Game::AddMirrorBody(std::vector<DrawItem>& out) {
         // the fist's hollow in the hand bone's frame (x along the fingers, y from the finger tips to the back of the hand, z across
         // it): the fingers' first joints stand at x 0.085 to 0.090, y 0.013 to 0.018, the middle ones at x 0.10 to 0.12, y -0.01,
         // the last ones curled back to x 0.11, y -0.035 to -0.041 (PT_GRIP_LOG); the flashlight runs across the hand there. At
-        // (0.088, -0.030) it lay on the finger tips with the palm open above it (the user's still of 06.10)
-        constexpr glm::vec3 kFist{0.095f, -0.013f, -0.005f};
+        // (0.088, -0.030) it lay on the finger tips with the palm open above it (the user's still of 06.10). The flashlight's
+        // body is 0.020 m in radius (shsb_lght005); at (0.095, -0.013) its axis ran 9 mm from the little finger's middle joint
+        // (LF52 0.103, -0.009) and 20 to 26 mm from the other fingers' middle joints, so the fingers sank into it rather than
+        // closing round it (the user's report of 11 October). (0.077, -0.016) is the point of the hollow farthest from every
+        // finger joint and from the palm (about 0.026 m from each: the thumb's tip, the little finger, the knuckles)
+        constexpr glm::vec3 kFist{0.077f, -0.016f, -0.005f};
         constexpr float kHoldAt = 0.06f;
         constexpr float kGripRaise = 25.0f;
         const auto frame = [](const glm::vec3& r, const glm::vec3& u, const glm::vec3& d, const glm::vec3& o) {
@@ -775,10 +782,22 @@ void Game::UpdateHandyTarget(float dt) {
     glm::vec3 right = glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f));
     right = glm::length(right) > 1e-4f ? glm::normalize(right) * (glm::dot(right, camera.Right()) < 0.0f ? -1.0f : 1.0f) : camera.Right();
     const glm::vec3 up = glm::normalize(glm::cross(right, forward));
-    // demos that drive the player hold every lock, and the ending outro holds the player's light-stick offset at zero
-    const glm::vec2 s = demos_.ControlsPlayer() || EndingOutroInputBlocked(controller_.Step())
-                            ? glm::vec2(0.0f)
-                            : player_.LightStick() * (demo_camera ? 0.2f : 1.0f);
+    // 0x1282C50 reads the light stick on every frame, demo or not; only the player's locks (B bits 1 and 2) hold it, and under
+    // a demo's camera it is scaled by 0.2. So once gc_p00_030 switches the light on at the wall (frame 228) the light follows
+    // the stick while the demo still holds the view, as on PS4 (Discord report 11 October; the port had held it at zero for
+    // every demo that drives the player). The player's own look does not run then, so the stick is read here; the mouse (a PC
+    // addition) gives a deflection that eases back as a released stick does. The ending's outro keeps it at zero
+    if (demo_camera && demos_.ControlsPlayer()) {
+        const float decay = std::exp(-std::max(dt, 0.0f) / 0.15f);
+        demo_light_mouse_ = demo_light_mouse_ * decay + last_input_.mouse_look * 25.0f;
+        demo_light_mouse_ = glm::clamp(demo_light_mouse_, glm::vec2(-1.0f), glm::vec2(1.0f));
+    } else {
+        demo_light_mouse_ = glm::vec2(0.0f);
+    }
+    const glm::vec2 demo_stick =
+        glm::clamp(player_.DemoLightStick(last_input_, options_.invert_x, options_.invert_y) + demo_light_mouse_, glm::vec2(-1.0f), glm::vec2(1.0f));
+    const glm::vec2 s = EndingOutroInputBlocked(controller_.Step()) ? glm::vec2(0.0f)
+                        : (demos_.ControlsPlayer() ? demo_stick : player_.LightStick()) * (demo_camera ? 0.2f : 1.0f);
     const float a = 0.28125f * s.y;
     const float b = 0.375f * s.x;
     const float n2 = 1.0f + a * a + b * b;
@@ -1560,6 +1579,13 @@ bool Game::StartStreetWalk() {
     return true;
 }
 
+void Game::ToggleStreetFlashlight() {
+    if (!street_walk_ || !demos_.SceneryReady()) return;
+    player_.handy_light.enable = !player_.handy_light.enable;
+    if (audio_) audio_->PostEvent(player_.handy_light.enable ? "Play_sfx_light_on_01" : "Play_sfx_light_off_01", nullptr);
+    LogInfo("street: flashlight {}", player_.handy_light.enable ? "on" : "off");
+}
+
 void Game::UpdateStreetWalk(float dt) {
     if (!street_walk_) {
         return;
@@ -1967,6 +1993,25 @@ int Game::GamePlusTier() const {
 #endif
 }
 
+int Game::GamePlusNoticeDue() {
+    if (controller_.Step() != 15 || street_walk_) {
+        // the ending, its restart, the street: the next notice waits for the next walk through the start room's door
+        gameplus_door_seen_ = false;
+        return 0;
+    }
+    if (demos_.IsPlaying("gc_p00_010") || demos_.IsPlaying("gc_p00_160")) gameplus_door_seen_ = true;
+    const int tier = std::min(GamePlusTier(), 4);
+    if (tier <= 0 || static_cast<uint32_t>(tier) <= gameplus_announced_ || !gameplus_door_seen_) return 0;
+    const std::string& floor = floor_.CurrentFloorName();
+    if (floor.size() != 4 || floor[0] != 'f') return 0;
+    return tier;
+}
+
+void Game::TakeGamePlusNotice(int tier) {
+    gameplus_announced_ = std::max<uint32_t>(gameplus_announced_, static_cast<uint32_t>(tier));
+    LogInfo("game+: notice for tier {} given", tier);
+}
+
 void Game::EnableGamePlus() {
     if (!game_plus_) {
         LogInfo("game+: finished flag set (save tag)");
@@ -2115,6 +2160,7 @@ bool Game::ResetProgress() {
         save_store_.SetDirectory(config_.save_path.parent_path(),"PT_Save_Data");
         game_plus_=false;
         finishes_ = 0;
+        gameplus_announced_ = 0;
         // the reset runs the ending's restart (step 30), which keeps the save floor as the original does; a reset starts at f000
         floor_.SetSaveFloorName("f000");
         browse_save_suppressed_ = browse_waiting_entry_ = browse_door_placed_ = false;
@@ -2231,6 +2277,7 @@ void Game::ResetSaveBlocks() {
             options_.subtitle_language);
     game_plus_ = false;
     finishes_ = 0;
+    gameplus_announced_ = 0;
 }
 
 bool Game::BrowseLoop(int index) {
@@ -2443,6 +2490,7 @@ void Game::RequestSave() {
     file.progress.photo_word = nazo_.PhotoWord();
     file.progress.game_plus = game_plus_;
     file.progress.finishes = finishes_;
+    file.progress.gameplus_announced = gameplus_announced_;
     saved_progress_ = file.progress;
     ++save_io_count_;
     save_io_loading_ = false;
@@ -2519,6 +2567,7 @@ void Game::RequestLoad() {
         options_ = file->options;
         game_plus_ = file->progress.game_plus;
         finishes_ = file->progress.finishes;
+        gameplus_announced_ = file->progress.gameplus_announced;
         // 0x9280E0 sets only the floor index (0x923B40); g_SaveFloorName keeps its value (f000 at boot) until a GoNextFloor or Endf120
         floor_.SetFloorLevel(file->progress.floor);
         // A resume on f050 starts without the flashlight, as in the original: OnPreGame's SetupFlashLight

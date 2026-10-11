@@ -15,4 +15,11 @@ namespace pt {
 void PreserveCrashLog(const std::filesystem::path& log_path);
 void OfferCrashUpload(const std::filesystem::path& dir, const std::string& version, bool interactive);
 
+// The PC settings page's "Send pt.log to the developer": the running session's pt.log and the newest crash dump of `dir`, if
+// there is one, sent as one Sentry event (an envelope with the log and the dump as attachments) on its own thread. The player's
+// press is the consent. LogReportState tells the row what to show.
+enum class LogReportState { Idle, Sending, Sent, Failed };
+void SendLogReport(const std::filesystem::path& log, const std::filesystem::path& dir, const std::string& version);
+LogReportState GetLogReportState();
+
 }

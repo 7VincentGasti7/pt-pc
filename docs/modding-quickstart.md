@@ -27,7 +27,7 @@ The examples in [`examples/mods`](../examples/mods) all work as they are: copy o
 | Move, turn or scale an object | `edit` with `move`, `turn`, `scale` | see below |
 | Replace a game model (a prop, Lisa) | your `.glb` at the game model's path, under `Assets/` | see below |
 | Repaint a texture | a `.png` at the texture's path | `wall-pictures` |
-| Replace a sound | a `.wav` named after the sound's id | `radio-tone` |
+| Replace a sound | a `.wav` named after the sound's id | `flashlight-click` |
 | React to the game in a script | `init.lua` | `event-logger` |
 
 ## Step 1: find the name and position of things (F8)

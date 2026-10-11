@@ -623,6 +623,8 @@ struct App {
     pt::game::SubtitlePlayer* transcripts = nullptr;
     bool freecam_active = false;
     bool photo_active = false;
+    // Windows HDR for the window's display: 1 on, 0 off, -1 unknown (another system, or not read yet)
+    int display_hdr = -1;
     bool microphone_monitor = false;
     float microphone_db = -80.0f;
     std::string microphone_hypothesis;
@@ -790,6 +792,8 @@ void ApplyFullscreen(App& app) {
 }
 
 std::filesystem::path g_output_dir;
+// this session's pt.log (the PC settings page's "Send pt.log to the developer")
+std::filesystem::path g_log_path;
 
 std::filesystem::path UserDataDir() {
 #ifdef __APPLE__
@@ -1945,7 +1949,13 @@ public:
         if (s.display.fps_limit>0 && cap.value==0) { cap.values.push_back(std::to_string(s.display.fps_limit)); cap.value=9; }
         cap.wrap=false;
         display.rows.push_back(std::move(cap));
-        display.rows.push_back(Row(kHdr,"pc_hdr",OffOn(),s.display.hdr?1:0,"pc_note_hdr_restart"));
+        // as in other PC games: HDR can be chosen while the display runs in HDR (Windows: Settings > Display > Use HDR), and shows
+        // off and greyed while it does not
+        const bool hdr_available = app_.display_hdr != 0;
+        pt::game::PcSettingRow hdr = Row(kHdr, "pc_hdr", OffOn(), s.display.hdr && hdr_available ? 1 : 0,
+                                         hdr_available ? "pc_note_hdr_restart" : "pc_note_hdr_windows_off");
+        hdr.enabled = hdr_available;
+        display.rows.push_back(std::move(hdr));
         display.rows.push_back(Row(kFocusPause, "pc_focus_pause", OffOn(), s.display.pause_on_focus_loss ? 1 : 0, "pc_note_focus_pause"));
         display.rows.push_back(Row(kFocusMute, "pc_focus_mute", OffOn(), s.display.mute_in_background ? 1 : 0, "pc_note_focus_mute"));
         out.push_back(std::move(display));
@@ -2136,6 +2146,18 @@ public:
             reset.note = "pc_note_reset_done";
         }
         progress.rows.push_back(std::move(reset));
+        {
+            // the player's own report: pt.log and the newest crash dump (crash_upload.h), the value showing how it went
+            const pt::LogReportState state = pt::GetLogReportState();
+            const char* value = state == pt::LogReportState::Sending ? "pc_send_log_sending"
+                                : state == pt::LogReportState::Sent  ? "pc_send_log_sent"
+                                : state == pt::LogReportState::Failed ? "pc_send_log_failed"
+                                                                      : "pc_send_log_value";
+            pt::game::PcSettingRow send = Row(kSendLog, "pc_send_log", {value}, 0, "pc_note_send_log");
+            send.action = true;
+            send.enabled = state != pt::LogReportState::Sending;
+            progress.rows.push_back(std::move(send));
+        }
         auto extras = Row(kExtras, "pc_extras", {"pc_graphics_value"}, 0, "pc_note_extras_archive");
         extras.link = true;
         progress.rows.push_back(std::move(extras));
@@ -2609,6 +2631,7 @@ public:
         if(id==kTextures) page_=kTexturesPage;
         if(id==kEffects) page_=kEffectsPage;
         if (id == kMods) page_ = kModsPage;
+        if (id == kSendLog) pt::SendLogReport(g_log_path, g_output_dir.empty() ? std::filesystem::path(".") : g_output_dir, std::string(pt::update::CurrentVersion()));
         if (id == kReset && game_.SavesEnabled()) {
             pt::LogInfo("save: progress reset from the PC settings page ({})", game_.ResetProgress() ? "accepted" : "failed");
         }
@@ -2701,6 +2724,7 @@ private:
         kVibration,
         kDeadZone,
         kReset,
+        kSendLog,
         kRtShadows,
         kGraphics,
         kRtContact,
@@ -3703,7 +3727,8 @@ int RunGame(App& app, pt::Vfs& vfs) {
             paused_by_settings = false;
         }
     };
-    // Extras (PcSettings): the free camera (F6) flies within kFreecamRange of where it started, through the game's camera override;
+    // Extras (PcSettings): the free camera (F6) flies anywhere (GitHub issue 64: it had been held within 15 m of where it started),
+    // the photo mode's camera within kFreecamRange of where it started, both through the game's camera override;
     // the photo mode (F7) pauses the world as the pause menu does, flies the free camera and shows its own panel (PhotoPanel, drawn
     // as the PC settings page). Leaving either takes the override away and puts back the pause, the camera, the body, the effect
     // toggles and the film grain as they were
@@ -3908,6 +3933,8 @@ int RunGame(App& app, pt::Vfs& vfs) {
     // uploaded, at most 20 s: a first start that still has to generate them (minutes) goes on and swaps them in later
     bool boot_wait = true;
     const uint64_t boot_wait_start = SDL_GetTicksNS();
+    // when the title picture was last on screen (the start comes in a second after it, on black)
+    double boot_splash_gone = -1.0;
     float applied_volume = -1.0f;
     pt::ControllerSpeakerOutput controller_speaker;
     SDL_JoystickID speaker_gamepad_id = 0;
@@ -3922,23 +3949,23 @@ int RunGame(App& app, pt::Vfs& vfs) {
     // the player's own footsteps (Play_plr_footstep_*), felt on the DualSense actuators but not played on its speaker
     constexpr std::array<uint32_t, 7> kPlayerStepEvents{0x28E58AD8u, 0xF688B813u, 0xF688B80Du, 0x07F2CC27u,
                                                         0xC180CD50u, 0x07F2CC39u, 0x6A89341Eu};
-    // Windows HDR for the window's display, read once a second off the game's thread (DXGI, os.h WindowDisplayHdr): switched
-    // while the game runs, the swapchain is made again with the output the display now offers. The driver usually reports the
-    // change as an out of date swapchain as well; this covers the drivers that do not
+    // Windows HDR for the window's display (DXGI, os.h WindowDisplayHdr), read off the game's thread at the start, when the window
+    // gains focus (Windows HDR is switched in the Settings app) and when it moves to another display: switched while the game
+    // runs, the swapchain is made again with the output the display now offers. A read every second had been tried: creating
+    // DXGI factories all the time disturbed the borderless window's presentation (a black frame on alt-tab, stale captures)
     std::atomic<int> display_hdr{-1};
-    std::jthread display_hdr_poll;
-    if (app.window) {
-        void* hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(app.window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
-        if (hwnd) {
-            display_hdr_poll = std::jthread([hwnd, &display_hdr](std::stop_token stop) {
-                while (!stop.stop_requested()) {
-                    const std::optional<bool> on = pt::os::WindowDisplayHdr(hwnd);
-                    display_hdr.store(on ? (*on ? 1 : 0) : -1);
-                    for (int i = 0; i < 10 && !stop.stop_requested(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                }
-            });
-        }
-    }
+    std::jthread display_hdr_read;
+    void* display_hwnd = app.window ? SDL_GetPointerProperty(SDL_GetWindowProperties(app.window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr) : nullptr;
+    auto read_display_hdr = [&]() {
+        if (!display_hwnd) return;
+        display_hdr_read = std::jthread([hwnd = display_hwnd, &display_hdr]() {
+            const std::optional<bool> on = pt::os::WindowDisplayHdr(hwnd);
+            display_hdr.store(on ? (*on ? 1 : 0) : -1);
+        });
+    };
+    read_display_hdr();
+    bool display_focus = app.window && (SDL_GetWindowFlags(app.window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    SDL_DisplayID display_id = app.window ? SDL_GetDisplayForWindow(app.window) : 0;
     int display_hdr_seen = -1;
     // PT_TEST_HDR_TOGGLE=a,b,...: the HDR setting switched at those frames (tests of the output change while running)
     std::vector<uint64_t> hdr_toggle_frames;
@@ -3950,12 +3977,20 @@ int RunGame(App& app, pt::Vfs& vfs) {
         }
     }
     while (running) {
+        if (app.window) {
+            const bool focus = (SDL_GetWindowFlags(app.window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+            const SDL_DisplayID id = SDL_GetDisplayForWindow(app.window);
+            if ((focus && !display_focus) || id != display_id) read_display_hdr();
+            display_focus = focus;
+            display_id = id;
+        }
         if (!hdr_toggle_frames.empty() && frame >= hdr_toggle_frames.front()) {
             hdr_toggle_frames.erase(hdr_toggle_frames.begin());
             app.settings.display.hdr = !app.settings.display.hdr;
             app.renderer.SetHdr(app.settings.display.hdr);
         }
         if (const int now = display_hdr.load(); now >= 0 && now != display_hdr_seen) {
+            app.display_hdr = now;
             if (display_hdr_seen >= 0) {
                 pt::LogInfo("display: Windows HDR turned {} for this display", now ? "on" : "off");
                 app.renderer.RecheckOutput();
@@ -3980,8 +4015,15 @@ int RunGame(App& app, pt::Vfs& vfs) {
         if (boot_wait) {
             const bool preparing = app.texture_requested || app.textures.EnhancedPending();
             const double waited = static_cast<double>(SDL_GetTicksNS() - boot_wait_start) * 1e-9;
-            // the title picture shows for its time and the black loading screen a moment after it before the game comes in
-            const bool hold = ((preparing && waited < 20.0) || waited < boot_splash_seconds + 1.0) && game.Controller().Step() <= 5;
+            // The title picture comes first and alone, as the PS4's start screen does: the game stays at its loading step (5,
+            // before the 7780s logo of step 8 and a resumed game's wake-up) while the picture shows, and a second of the black
+            // loading screen after it. The picture's own timer (GameUi, frame steps capped at 0.1 s) runs behind the clock on a slow
+            // loading start, so the hold follows the picture, not the clock: the logo and the wake-up had played under it
+            // (Discord reports 11 October)
+            const bool splash = ui_ready && ui.BootSplashShown() && waited < 30.0;
+            if (splash) boot_splash_gone = waited;
+            const bool after_splash = boot_splash_gone >= 0.0 && waited < boot_splash_gone + 1.0;
+            const bool hold = ((preparing && waited < 20.0) || waited < boot_splash_seconds + 1.0 || splash || after_splash) && game.Controller().Step() <= 5;
             if (!hold) {
                 boot_wait = false;
                 pt::LogInfo("start: loading screen released after {:.1f} s{}", waited, preparing ? " (enhanced textures still preparing)" : "");
@@ -4304,6 +4346,12 @@ int RunGame(App& app, pt::Vfs& vfs) {
                 game.LogCapturePose(game.ViewCamera());
             }
             f9_was_down = keys[SDL_SCANCODE_F9];
+            // the street walk's flashlight (not in the original): F switches the game's own handy light on and off there
+            static bool street_f_was_down = false;
+            if (keys[SDL_SCANCODE_F] && !street_f_was_down && keyboard_free && !(ui_ready && ui.MenuOpen()) && !photo_mode) {
+                game.ToggleStreetFlashlight();
+            }
+            street_f_was_down = keys[SDL_SCANCODE_F];
             // the mods' inspector (Game::LogModInspect), only with a mod installed
             if (keys[SDL_SCANCODE_F8] && !f8_was_down && keyboard_free && pt::mods::Active()) {
                 game.LogModInspect(game.ViewCamera());
@@ -4471,9 +4519,8 @@ int RunGame(App& app, pt::Vfs& vfs) {
             accumulator -= step;
             ++ticks;
         }
-        if (pt::game::EndingOutroInputBlocked(game.Controller().Step())) {
-            stop_freecam();
-        }
+        // the free camera and the photo mode stay on through the ending (issue #51): stopping the free camera on every frame of
+        // the ending had closed the photo mode as it opened (its sound played, nothing else)
         if (ui_ready) ui.AdvancePresentation(paced ? dt : step);
         // the release check's answer, once (non-blocking): the in-game notice, and the URL in the log (docs/updates.md)
         if (!app.update_polled && app.updates.Done()) {
@@ -4485,6 +4532,14 @@ int RunGame(App& app, pt::Vfs& vfs) {
         }
         // the notice waits while the photo mode draws in the UI's place, and never shows in VR (its HUD is not the place for it)
         if (ui_ready) ui.HoldUpdateNotice(photo_mode || vr != nullptr);
+        // Game+: each tier announced once in the notice's place when play reaches a hallway loop ("New Game Plus 2/4"), kept with
+        // the save's Game+ state (Game::GamePlusNoticeDue)
+        if (ui_ready && !vr) {
+            if (const int tier = game.GamePlusNoticeDue(); tier > 0) {
+                ui.ShowNotice(std::format("pc_gameplus_notice{}{}", pt::game::kPcNoteArgument, tier));
+                game.TakeGamePlusNotice(tier);
+            }
+        }
         game.Speedrun().Poll();
         if (game.SavesEnabled() && (game.BrowseUnlockGeneration() != unlocks_seen || game.ArchiveGeneration() != archive_seen)) {
             unlocks_seen = game.BrowseUnlockGeneration();
@@ -4544,7 +4599,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
             const float speed_scale = photo_mode ? photo_panel.Settings().SpeedScale() : 1.0f;
             freecam_camera.position += move * ((fast ? 6.0f : 1.5f) * speed_scale * dt);
             const glm::vec3 offset = freecam_camera.position - freecam_origin;
-            if (glm::length(offset) > kFreecamRange) {
+            if (photo_mode && glm::length(offset) > kFreecamRange) {
                 freecam_camera.position = freecam_origin + glm::normalize(offset) * kFreecamRange;
             }
             const glm::vec2 look = polled.mouse_look + polled.right_stick * (2.5f * dt);
@@ -4700,6 +4755,10 @@ int RunGame(App& app, pt::Vfs& vfs) {
         // VR's stereo view: the eyes take the fade (the HUD draws only the UI)
         app.renderer.fade[3] = ui_ready && !(vr && !vr->ScreenMode(game)) ? 0.0f : fx.FadeShown().a;
         app.renderer.output_brightness = game.Options().BrightnessValue();
+        if (ui_ready) {
+            const auto s = ui.SubliminalString();
+            app.scene.SetSubliminalString({s.texture, s.position, s.value});
+        }
         app.renderer.plain_output = ui.BootSplashShown();
         draw_items.clear();
         // the drawn view: the player's own (GetCamera), or the third person camera behind the shoulder (Extras), or the theater's
@@ -5151,13 +5210,14 @@ int RunGame(App& app, pt::Vfs& vfs) {
                 cap = cap > 0 ? std::min(cap, kMenuFpsCap) : kMenuFpsCap;
             }
             // DLSS Frame Generation is off in menus and the paused game (Streamline's guide, 6.4), where the cap above holds
-            // the frames; in play the fps limit goes to Reflex's limiter (the one Streamline's frame pacing works with), for
-            // the rendered frames: half the shown rate with one generated frame each
+            // the frames; in play the fps limit goes to Reflex's limiter (the one Streamline's frame pacing works with). Reflex
+            // applies it to the frames shown, generated ones included: the port had passed twice the period for the rendered
+            // frames, and a 60 cap showed 30 frames from 15 rendered (Discord report 11 October)
             pt::UpscaleHost::Get().SetMenuOpen(menu);
             pt::FrameGeneration* dlss_fg = pt::streamline::Active() ? pt::UpscaleHost::Get().DlssFrameGenImpl() : nullptr;
             const bool reflex_paced = dlss_fg && dlss_fg->Generating() && !menu;
             if (pt::streamline::Active()) {
-                pt::streamline::SetFrameLimit(reflex_paced && cap > 0 ? static_cast<uint32_t>(2000000 / cap) : 0u);
+                pt::streamline::SetFrameLimit(reflex_paced && cap > 0 ? static_cast<uint32_t>(1000000 / cap) : 0u);
                 static uint64_t streamline_frames = 0;
                 if (!app.streamline_marker.empty() && ++streamline_frames == 600) {
                     std::error_code ec;
@@ -5264,6 +5324,7 @@ int main(int argc, char** argv) {
         }
     }
     g_output_dir = log_path.parent_path();
+    g_log_path = log_path;
     // the crashed session's log, kept beside its dump before this start rewrites it (crash_upload.h)
     if (!tool) pt::PreserveCrashLog(log_path);
     pt::LogSetFile(log_path);
