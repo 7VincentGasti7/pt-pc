@@ -360,14 +360,16 @@ void OptionsMenu::ApplyPrompts() {
             state.positions = std::move(positions);
         }
     }
-    UifNodeState& help = view_.State(pc_.Help());
-    help.inline_picture.reset();
-    if (help.text) {
-        if (const size_t at = help.text->find(kAcceptToken); at != std::string::npos) {
-            const PromptGlyph glyph = assets_->PromptPicture({PromptButton::Cross, KeyAction::Confirm, KeyAction::Confirm}, prompt_style_);
-            help.text->replace(at, kAcceptToken.size(), "\xEE\x80\x80");
-            help.inline_picture = UifInlinePicture{derived_->AddTexture(glyph.icon), derived_->AddTexture(glyph.glow), glyph.uv0, glyph.uv1,
-                                                   glyph.width, glyph.body_width, glyph.body_height};
+    for (const uint16_t id : {pc_.Help(), pc_.NavigationText()}) {
+        UifNodeState& help = view_.State(id);
+        help.inline_picture.reset();
+        if (help.text) {
+            if (const size_t at = help.text->find(kAcceptToken); at != std::string::npos) {
+                const PromptGlyph glyph = assets_->PromptPicture({PromptButton::Cross, KeyAction::Confirm, KeyAction::Confirm}, prompt_style_);
+                help.text->replace(at, kAcceptToken.size(), "\xEE\x80\x80");
+                help.inline_picture = UifInlinePicture{derived_->AddTexture(glyph.icon), derived_->AddTexture(glyph.glow), glyph.uv0, glyph.uv1,
+                                                       glyph.width, glyph.body_width, glyph.body_height};
+            }
         }
     }
     if (!prompts_shown_ || shown_prompts_ != prompt_style_.device) {

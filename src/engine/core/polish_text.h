@@ -423,7 +423,7 @@ inline constexpr Text kMenu[] = {
     {"pc_archive_hint","Enter / Krzyżyk / A: otwórz"},
     {"pc_archive_view_hint","W lewo / W prawo: poprzedni / następny element. Esc / Kółko: wstecz."},
     {"pc_archive_demo_hint","Esc / Kółko / Enter / Krzyżyk: zatrzymaj"},
-    {"pc_archive_model_hint","WASD / lewy drążek: przesuwanie kamery. Strzałki / prawy drążek: obrót. Spusty: przybliżenie. Esc / Kółko: wstecz."},
+    {"pc_archive_model_hint","WASD / lewy drążek: bliżej lub dalej. Prawy przycisk myszy / prawy drążek: rozglądanie. Space/Ctrl / spusty: góra/dół. Shift/L3: szybciej. Esc / Kółko: wstecz."},
     {"pc_archive_sub","Komunikat podprogowy {1}"},
     {"pc_archive_noise","Szum"},
     {"pc_archive_noise_normal","Zniekształcenie szumu"},

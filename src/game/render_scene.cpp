@@ -1140,6 +1140,7 @@ void RenderSceneBuilder::Build(Game& game, const Camera& camera, float dt, Scene
     screen.zoom = game.GetPlayer().zoom;
     screen.depth_of_field = (resident_.plugin_flags & 0x8u) != 0;
     screen.motion_blur = (resident_.plugin_flags & 0x4u) != 0;
+    screen.smooth_camera_motion_blur = game.StreetWalkActive();
     screen.fixed_shutter = (resident_.plugin_flags & 0x80u) != 0;
     screen.focus_distance = focus;
     screen.focal_length = game.Parameters().player.focal_length;

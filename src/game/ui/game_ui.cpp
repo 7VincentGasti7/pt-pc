@@ -673,12 +673,12 @@ void GameUi::DrawTheaterHint(ui::UiBatch& batch, const UiCanvas& canvas) {
         ui::TextStyle style;
         style.font = &font->font;
         style.font_width = style.font_height = 18.0f;
-        ui::TextLayout layout = ui::LayoutText(text, style, hi.x - lo.x);
+        ui::TextLayout layout = ui::LayoutTextInBox(text, style, glm::vec2(0.0f), hi - lo);
         ui::PlaceText(layout, lo, hi, align, align, ui::TextAlign::Center, true);
         DrawText(batch, canvas, *font, layout, glm::vec4(1.0f, 1.0f, 1.0f, 0.55f), ui::UiBlend::Alpha);
     };
     line(theater_title_, {30.0f, 14.0f}, {UiCanvas::kWidth - 30.0f, 40.0f}, ui::TextAlign::Start);
-    line(theater_hint_, {30.0f, UiCanvas::kHeight - 40.0f}, {UiCanvas::kWidth - 30.0f, UiCanvas::kHeight - 14.0f}, ui::TextAlign::Center);
+    line(theater_hint_, {30.0f, UiCanvas::kHeight - 64.0f}, {UiCanvas::kWidth - 30.0f, UiCanvas::kHeight - 14.0f}, ui::TextAlign::Center);
 }
 
 // The port's credits page (port_credits.h): the ending's off-white fade over the whole screen and the current card in the

@@ -1718,12 +1718,9 @@ void SetUpLoopPreviewRun(Options& options) {
 // its picture is on screen and the entry's frames have passed (ArchiveThumbnailFrames), at 480 x 270, named by the entry; the
 // subliminal images and photo pieces need none (the wall draws them from the data). The capture is a run of pt.exe of its own
 // (--make-museum-previews, started by the Museum's page when its pictures are missing) and nothing of it is shipped
-constexpr int kMuseumPreviewVersion = 2;
-// the capture's held exposure for a model (ArchiveTheater::Settings::model_ev): the viewer's own -5.5 EV renders the start
-// room's models near black at thumbnail size (a radio or phone at a mean of 1 of 255, even lifted six times on the wall);
-// +0.5 EV is 3.6 stops brighter under the exposure rows' compensation (ExposureFor), where the radio, the phone and the
-// models read as the cutscene shots do. Capture only: the viewer in the game keeps the room's exposure
-constexpr float kMuseumPreviewModelEv = 0.5f;
+constexpr int kMuseumPreviewVersion = 3;
+// Museum thumbnails use the same controlled lighting and exposure as the model viewer.
+constexpr float kMuseumPreviewModelEv = pt::game::kArchiveModelEv;
 
 std::string MuseumPreviewRoute(const std::filesystem::path& dir, const std::vector<const pt::game::ArchiveEntry*>& entries) {
     std::string route = "20 sstep 15\n20 swait 30\n";
@@ -2465,7 +2462,7 @@ public:
         case M::Demo:
         case M::Model:
             panel.thumbnail = pt::os::PathToUtf8((MuseumPreviewDirectory() / std::format("{}.png", entry.id)));
-            panel.lift = entry.media == M::Model ? 10.0f : 6.0f;
+            panel.lift = 1.0f;
             break;
         case M::Sound:
         case M::Dialogue:
@@ -2519,6 +2516,7 @@ public:
         switch (entry->media) {
         case M::Sound:
         case M::Dialogue: {
+            panel.audio = true;
             if (!app_.transcripts) break;
             // while it plays, the line last begun is the spoken one
             const float now = voice_entry_ == entry ? VoiceSeconds() : -1.0f;
@@ -4168,8 +4166,9 @@ int RunGame(App& app, pt::Vfs& vfs) {
             }
             tab_was_down = keys[SDL_SCANCODE_TAB];
             // the photo mode's panel keeps the pointer; the right mouse button held looks around
-            const bool photo_pointer = photo_mode && photo_overlay && !(SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_RMASK);
-            const bool want_capture = !show_debug && !show_settings && !(ui_ready && ui.MenuOpen()) && !photo_pointer && !vr &&
+            const bool photo_pointer = ((photo_mode && photo_overlay) || (theater && theater->theater->ModelView())) &&
+                                       !(SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_RMASK);
+            const bool want_capture = !show_debug && !show_settings && !(ui_ready && ui.MenuOpen() && !theater) && !photo_pointer && !vr &&
                                       (SDL_GetWindowFlags(app.window) & SDL_WINDOW_INPUT_FOCUS);
             if (want_capture != mouse_capture_requested) {
                 mouse_capture_requested = want_capture;
@@ -4197,7 +4196,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
         }
         const bool keyboard_free = app.window && !show_settings && !(show_debug && ImGui::GetIO().WantCaptureKeyboard);
         // headless runs have no window to capture the mouse: injected mouse buttons act as in play unless the menu is open
-        const bool menu_open = ui_ready && ui.MenuOpen();
+        const bool menu_open = ui_ready && ui.MenuOpen() && !theater;
         const pt::MouseUse mouse_use = mouse_captured || (!app.window && !menu_open) ? pt::MouseUse::Look
                                        : menu_open && !show_settings                   ? pt::MouseUse::Menu
                                                                                        : pt::MouseUse::None;
@@ -4239,7 +4238,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
         const bool ending_outro = pt::game::EndingOutroInputBlocked(game.Controller().Step());
         // the free camera and the photo mode keep their controls during the ending (the game itself gets none, Game::Update):
         // the gate had zeroed their movement, look and panel input, so both opened but did nothing there
-        if (!freecam && !photo_mode) polled = pt::game::GateEndingOutroInput(game.Controller().Step(), polled);
+        if (!freecam && !photo_mode && !theater) polled = pt::game::GateEndingOutroInput(game.Controller().Step(), polled);
         if (options.forced_prompts) {
             polled.prompts = *options.forced_prompts;
         }
@@ -4462,7 +4461,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
             }
             pt::InputState state = pending_input;
             script.Apply(frame, game, state);
-            state = pt::game::GateEndingOutroInput(game.Controller().Step(), state);
+            if (!theater) state = pt::game::GateEndingOutroInput(game.Controller().Step(), state);
             if (freecam) {
                 state = FreecamInput(state);
             }
@@ -4592,24 +4591,23 @@ int RunGame(App& app, pt::Vfs& vfs) {
         } else if (freecam && ui_ready && ui.MenuOpen()) {
             stop_freecam();
         }
-        if (freecam) {
+        const auto camera_controls = [&]() {
             const bool* keys = app.window ? SDL_GetKeyboardState(nullptr) : nullptr;
             const auto key = [&](SDL_Scancode code) { return keys && keyboard_free && keys[code]; };
-            const bool fast = key(SDL_SCANCODE_LSHIFT) || key(SDL_SCANCODE_RSHIFT) || (polled.raw_held & pt::kRawL3);
-            float rise = 0.0f;
-            if (key(SDL_SCANCODE_SPACE) || (polled.raw_held & pt::kRawR2)) rise += 1.0f;
-            if (key(SDL_SCANCODE_LCTRL) || key(SDL_SCANCODE_RCTRL) || (polled.raw_held & pt::kRawL2)) rise -= 1.0f;
-            const glm::vec3 move = freecam_camera.Forward() * polled.left_stick.y + freecam_camera.Right() * polled.left_stick.x +
-                                   glm::vec3(0.0f, rise, 0.0f);
+            pt::FreeCameraControls controls;
+            controls.movement = polled.left_stick;
+            controls.mouse_look = polled.mouse_look;
+            controls.right_stick = polled.right_stick;
+            controls.fast = key(SDL_SCANCODE_LSHIFT) || key(SDL_SCANCODE_RSHIFT) || (polled.raw_held & pt::kRawL3);
+            if (key(SDL_SCANCODE_SPACE) || (polled.raw_held & pt::kRawR2)) controls.rise += 1.0f;
+            if (key(SDL_SCANCODE_LCTRL) || (polled.raw_held & pt::kRawL2)) controls.rise -= 1.0f;
+            return controls;
+        };
+        if (theater && theater->theater->ModelView()) theater->theater->UpdateModelCamera(dt, camera_controls());
+        if (freecam) {
             const float speed_scale = photo_mode ? photo_panel.Settings().SpeedScale() : 1.0f;
-            freecam_camera.position += move * ((fast ? 6.0f : 1.5f) * speed_scale * dt);
-            const glm::vec3 offset = freecam_camera.position - freecam_origin;
-            if (photo_mode && glm::length(offset) > kFreecamRange) {
-                freecam_camera.position = freecam_origin + glm::normalize(offset) * kFreecamRange;
-            }
-            const glm::vec2 look = polled.mouse_look + polled.right_stick * (2.5f * dt);
-            freecam_camera.yaw -= look.x * (game.Options().invert_x ? -1.0f : 1.0f);
-            freecam_camera.pitch = std::clamp(freecam_camera.pitch - look.y * (game.Options().invert_y ? -1.0f : 1.0f), -1.55f, 1.55f);
+            pt::AdvanceFreeCamera(freecam_camera, camera_controls(), dt, game.Options().invert_x, game.Options().invert_y, speed_scale);
+            if (photo_mode) pt::LimitFreeCameraRange(freecam_camera, freecam_origin, kFreecamRange);
             if (photo_mode) {
                 // the photo mode's lens and effects (each put back by stop_photo); film grain at 0 in the PC settings is shown at
                 // the original's strength while the photo mode turns it on
@@ -4986,6 +4984,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
                 const VkExtent2D warm_extent = app.renderer.RenderExtent();
                 const float warm_aspect = static_cast<float>(warm_extent.width) / static_cast<float>(std::max(1u, warm_extent.height));
                 view_vfx.Prepare(view, camera, warm_aspect, lighting, vfx_pass, blend);
+                if (theater) theater->theater->ApplyModelLighting(lighting);
                 app.scene.SetMotionReference(camera, 1.0f / options.tick_rate, i > 0 || last_render_frame + 1 == frame);
                 app.scene.Render(camera, draw_items, lighting, dt);
                 take_reflection_readback(view);
@@ -5014,6 +5013,7 @@ int RunGame(App& app, pt::Vfs& vfs) {
             const VkExtent2D vfx_extent = app.renderer.RenderExtent();
             view_vfx.Prepare(view, camera, static_cast<float>(vfx_extent.width) / static_cast<float>(std::max(1u, vfx_extent.height)), lighting,
                              vfx_pass, blend);
+            if (theater) theater->theater->ApplyModelLighting(lighting);
             // while they tear the image a temporal upscaler's history only ghosts it (the DLSS 4 models read no reactive mask): the
             // lanterns smeared into "ghost lanterns" on the f120 bug screen; each such frame starts the history again
             const bool view_distortion = view_vfx.ViewDistortion();

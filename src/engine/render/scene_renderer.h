@@ -457,6 +457,8 @@ private:
     RenderTarget mb_neighbour_;
     RenderTarget mb_bake_;
     RenderTarget mb_blur_[2];
+    RenderTarget mb_original_bake_;
+    RenderTarget mb_original_blur_[2];
     RenderTarget mirror_;
     RenderTarget mirror_history_;
     RenderTarget mirror_temporal_;
@@ -675,7 +677,7 @@ private:
     Camera last_camera_;
     bool has_last_camera_ = false;
     glm::mat4 previous_view_projection_{1.0f};
-    // the motion blur's previous camera: the camera's motion smoothed over about 100 ms (UpdateMotion), not the last frame's
+    // Exact previous camera in the house; street exploration smooths motion over about 100 ms (UpdateMotion).
     glm::mat4 blur_previous_view_projection_{1.0f};
     glm::vec4 blur_rates_{0.0f};          // yaw, pitch, roll per second
     glm::vec3 blur_velocity_{0.0f};       // metres per second

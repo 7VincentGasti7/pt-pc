@@ -601,7 +601,8 @@ void SceneRenderer::DestroyTargets() {
                                &particles_near_, &particles_far_, &near_far_depth_, &near_far_depth_attachment_, &dof_half_,
                                &dof_quarter_[0], &dof_quarter_[1], &dof_eighth_[0], &dof_eighth_[1], &velocity_, &object_velocity_,
                                &mb_tile_[0], &mb_tile_[1], &mb_tile_[2], &mb_tile_[3], &mb_tile_[4], &mb_neighbour_, &mb_bake_,
-                               &mb_blur_[0], &mb_blur_[1], &mirror_history_, &mirror_temporal_, &reflect_layer_, &reflect_offset_,
+                               &mb_blur_[0], &mb_blur_[1], &mb_original_bake_, &mb_original_blur_[0], &mb_original_blur_[1],
+                               &mirror_history_, &mirror_temporal_, &reflect_layer_, &reflect_offset_,
                                &reflect_history_[0], &reflect_history_[1]};
     for (RenderTarget* t : targets) {
         ctx.DestroyImage(t->image);
@@ -673,7 +674,10 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
          CreateTarget(dof_quarter_[1], kPostFormat, shift2, color, c) && CreateTarget(dof_eighth_[0], kPostFormat, shift3, color, c) &&
          CreateTarget(dof_eighth_[1], kPostFormat, shift3, color, c) && CreateTarget(velocity_, kPostFormat, output, color, c) &&
          CreateTarget(object_velocity_, kPostFormat, extent, color, c) && CreateTarget(mb_blur_[0], kPostFormat, output, color, c) &&
-         CreateTarget(mb_blur_[1], kPostFormat, output, color, c);
+         CreateTarget(mb_blur_[1], kPostFormat, output, color, c) &&
+         CreateTarget(mb_original_bake_, kPostFormat, shift1, color, c) &&
+         CreateTarget(mb_original_blur_[0], kPostFormat, shift1, color, c) &&
+         CreateTarget(mb_original_blur_[1], kPostFormat, shift1, color, c);
     for (uint32_t i = 0; i < 5 && ok; ++i) {
         const uint32_t round = (2u << i) - 1u;
         ok = CreateTarget(mb_tile_[i], kPostFormat, {(output.width + round) >> (i + 1), (output.height + round) >> (i + 1)}, color, c);
@@ -700,7 +704,7 @@ bool SceneRenderer::EnsureTargets(VkExtent2D extent, VkExtent2D output, bool ups
                                   &particles_near_, &particles_far_, &near_far_depth_, &dof_half_,
                                   &dof_quarter_[0], &dof_quarter_[1], &dof_eighth_[0], &dof_eighth_[1], &velocity_, &object_velocity_, &mb_tile_[0],
                                   &mb_tile_[1], &mb_tile_[2], &mb_tile_[3], &mb_tile_[4], &mb_neighbour_, &mb_bake_, &mb_blur_[0],
-                                  &mb_blur_[1]};
+                                  &mb_blur_[1], &mb_original_bake_, &mb_original_blur_[0], &mb_original_blur_[1]};
         for (RenderTarget* t : colors) {
             UseTargets(cmd, {{t, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}});
             BeginPass(cmd, t->Extent(), {{t, true, {}}});
@@ -790,6 +794,9 @@ void SceneRenderer::WriteImageDescriptors() {
     set_target(gpu::kImgMbBake, mb_bake_);
     set_target(gpu::kImgMbBlurA, mb_blur_[0]);
     set_target(gpu::kImgMbBlurB, mb_blur_[1]);
+    set_target(gpu::kImgMbOriginalBake, mb_original_bake_);
+    set_target(gpu::kImgMbOriginalBlurA, mb_original_blur_[0]);
+    set_target(gpu::kImgMbOriginalBlurB, mb_original_blur_[1]);
     set_target(gpu::kImgMirror, mirror_);
     set_target(gpu::kImgMirrorHistory, mirror_history_);
     set_target(gpu::kImgMirrorTemporal, mirror_temporal_);

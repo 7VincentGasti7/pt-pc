@@ -409,17 +409,17 @@ void SceneRenderer::UpdateMotion(const Camera& camera, float dt) {
     previous_view_projection_ = previous.Projection(aspect) * previous.View();
     const float step = std::clamp(interval, 1.0e-4f, 1.0f);
     frame_time_ = reference ? static_cast<double>(step) : static_cast<double>(step * 0.016666668f) + frame_time_ * 0.9833333333333333;
-    // The motion blur draws each frame's camera motion stretched to the shutter over the smoothed frame time. With the mouse
+    if (reference || !lighting_->screen.smooth_camera_motion_blur) {
+        blur_previous_view_projection_ = previous_view_projection_;
+        blur_rates_valid_ = false;
+        return;
+    }
+    // Street exploration draws each frame's camera motion stretched to the shutter over the smoothed frame time. With the mouse
     // the turn of a single frame varies a lot (its events land unevenly on the frames, the frames' lengths vary), so the blur
     // grew and shrank from one frame to the next: the bright, fine texture of the wet street and the lit floors flickered
     // while the view turned (1.0.3 test; off with motion blur off). The blur takes the camera's motion per second smoothed
     // over about 100 ms instead (a quick left-right shake keeps a blur through its turns rather than going sharp at each), back
     // over the smoothed frame time; the upscaler and the reflections keep the exact frame
-    if (reference) {
-        blur_previous_view_projection_ = previous_view_projection_;
-        blur_rates_valid_ = false;
-        return;
-    }
     const auto wrap = [](float a) { return std::remainder(a, glm::two_pi<float>()); };
     const glm::vec4 rates(wrap(camera.yaw - previous.yaw) / step, (camera.pitch - previous.pitch) / step, wrap(camera.roll - previous.roll) / step, 0.0f);
     const glm::vec3 velocity = (camera.position - previous.position) / step;
@@ -448,6 +448,11 @@ bool SceneRenderer::RecordMotionBlur(VkCommandBuffer cmd, const ScreenSettings& 
     }
     const float ratio = screen.fixed_shutter ? shutter * 60.0f : shutter * static_cast<float>(1.0 / frame_time_);
     const float scale = ratio * 0.5f;
+    const bool smooth = screen.smooth_camera_motion_blur;
+    RenderTarget& bake = smooth ? mb_bake_ : mb_original_bake_;
+    RenderTarget* blur = smooth ? mb_blur_ : mb_original_blur_;
+    const uint32_t bake_image = smooth ? gpu::kImgMbBake : gpu::kImgMbOriginalBake;
+    const uint32_t blur_image = smooth ? gpu::kImgMbBlurA : gpu::kImgMbOriginalBlurA;
     gpu::PassPush push;
     push.ids = glm::uvec4(gpu::kImgObjectVelocity, 0, 0, post_view_);
     push.f0 = glm::vec4(1920.0f / 128.0f, 1080.0f / 128.0f, 0.0f, 0.0f);
@@ -465,13 +470,13 @@ bool SceneRenderer::RecordMotionBlur(VkCommandBuffer cmd, const ScreenSettings& 
     PostPass(cmd, mb_neighbour_, mb_tile_pipeline_, push);
     push.ids = glm::uvec4(gpu::kImgVelocity, gpu::kImgMbNeighbour, 0, post_view_);
     push.f0 = glm::vec4(0.5f, 0.5f, 1.0f, scale);
-    PostPass(cmd, mb_bake_, mb_bake_pipeline_, push);
-    push.ids = glm::uvec4(current == 0 ? gpu::kImgLdrA : gpu::kImgLdrB, gpu::kImgMbBake, 0, post_view_);
-    PostPass(cmd, mb_blur_[0], mb_mcguire_, push);
-    push.ids = glm::uvec4(gpu::kImgMbBlurA, gpu::kImgMbBake, 0, post_view_);
+    PostPass(cmd, bake, mb_bake_pipeline_, push);
+    push.ids = glm::uvec4(current == 0 ? gpu::kImgLdrA : gpu::kImgLdrB, bake_image, smooth ? 1u : 0u, post_view_);
+    PostPass(cmd, blur[0], mb_mcguire_, push);
+    push.ids = glm::uvec4(blur_image, bake_image, smooth ? 1u : 0u, post_view_);
     push.f0 = glm::vec4(0.5f, 0.5f, 0.16666667f, scale);
-    PostPass(cmd, mb_blur_[1], mb_mcguire_, push);
-    push.ids = glm::uvec4(gpu::kImgMbBlurB, 0, 0, post_view_);
+    PostPass(cmd, blur[1], mb_mcguire_, push);
+    push.ids = glm::uvec4(blur_image + 1, 0, 0, post_view_);
     push.f0 = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
     PostPass(cmd, ldr_[current], mb_composite_, push);
     return true;

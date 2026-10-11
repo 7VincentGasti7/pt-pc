@@ -415,7 +415,7 @@ constexpr Entry kTexts[] = {
     {"pc_archive_hint", {"Enter / X / A: open"}},
     {"pc_archive_view_hint", {"Left / Right: previous / next. Esc / Circle: back."}},
     {"pc_archive_demo_hint", {"Esc / Circle / Enter / Cross: stop"}},
-    {"pc_archive_model_hint", {"WASD / left stick: pan. Arrows / right stick: turn. Triggers: zoom. Esc / Circle: back."}},
+    {"pc_archive_model_hint", {"WASD / left stick: move closer or away. RMB / right stick: look. Space/Ctrl / triggers: up/down. Shift/L3: faster. Esc / Circle: back."}},
     {"pc_archive_sub", {"Subliminal text {1}"}},
     {"pc_archive_noise", {"Noise"}},
     {"pc_archive_noise_normal", {"Noise distortion"}},
