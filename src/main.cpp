@@ -3957,13 +3957,20 @@ int RunGame(App& app, pt::Vfs& vfs) {
     // runs, the swapchain is made again with the output the display now offers. A read every second had been tried: creating
     // DXGI factories all the time disturbed the borderless window's presentation (a black frame on alt-tab, stale captures)
     std::atomic<int> display_hdr{-1};
-    std::jthread display_hdr_read;
+    // a plain thread joined before the next read and at the end (std::jthread is missing from the macOS 15 SDK's libc++)
+    struct JoinedThread {
+        std::thread thread;
+        ~JoinedThread() {
+            if (thread.joinable()) thread.join();
+        }
+    } display_hdr_read;
     void* display_hwnd = app.window ? SDL_GetPointerProperty(SDL_GetWindowProperties(app.window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr) : nullptr;
     auto read_display_hdr = [&]() {
         if (!display_hwnd) return;
-        display_hdr_read = std::jthread([hwnd = display_hwnd, &display_hdr]() {
-            const std::optional<bool> on = pt::os::WindowDisplayHdr(hwnd);
-            display_hdr.store(on ? (*on ? 1 : 0) : -1);
+        if (display_hdr_read.thread.joinable()) display_hdr_read.thread.join();
+        display_hdr_read.thread = std::thread([hwnd = display_hwnd, &display_hdr]() {
+            const std::optional<bool> hdr_on = pt::os::WindowDisplayHdr(hwnd);
+            display_hdr.store(hdr_on ? (*hdr_on ? 1 : 0) : -1);
         });
     };
     read_display_hdr();
