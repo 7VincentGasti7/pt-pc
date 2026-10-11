@@ -436,7 +436,7 @@ void Game::AddMirrorBody(std::vector<DrawItem>& out) {
     const bool third_person_transition = third_person_ && !FreeView() && third_person_weight_ > 0.0f && player_.handy_light.enable;
     // the ending: its demo draws its own Henry; the player's body, parked out of the scene, showed in the photo mode's view
     // until the demo's camera turned to his face
-    if (floor_.CurrentFloorName() == "ending") return;
+    if (floor_.CurrentFloorName() == "ending" && !street_walk_) return;
     if (body_off || !player_.spawned || (!BodyShown() && !third_person_transition && (!effects_.mirror_capture || mirror_viewport_bits_ == 0 || demos_.ControlsPlayer() ||
         nazo_.IsPeepholeTheaterActive()))) {
         static const bool trace = std::getenv("PT_MIRROR_TRACE") != nullptr;

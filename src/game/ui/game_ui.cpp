@@ -560,7 +560,7 @@ void GameUi::DrawSubliminal(ui::UiBatch& batch, bool string_pass) {
     const glm::vec2 uv0(0.5f - 0.5f * across, 0.0f);
     const glm::vec2 uv1(0.5f + 0.5f * across, 1.0f);
     if (string_pass) {
-        // the handwriting goes into the scene before the tonemap (SceneRenderer::SetSubliminalString, SubliminalString below);
+        // the scene composites the handwriting after motion blur (SceneRenderer::SetSubliminalString, SubliminalString below);
         // the UI draws it only where no scene takes it (the VR HUD)
         if (!vr_hud_) return;
         const int image = subliminal_.Image();

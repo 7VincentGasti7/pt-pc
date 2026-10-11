@@ -417,8 +417,8 @@ bool SceneRenderer::CreatePipelines() {
     post.fragment = "debug.frag";
     debug_ = CreateGraphicsPipeline(device_, post);
     post.fragment = "subliminal_string.frag";
-    post.colors = {kPostFormat};
-    post.blend = BlendMode::Additive;
+    post.colors = {ldr_format_};
+    post.blend = BlendMode::None;
     subliminal_string_ = CreateGraphicsPipeline(device_, post);
     post.blend = BlendMode::None;
     post.fragment = "ssao.frag";

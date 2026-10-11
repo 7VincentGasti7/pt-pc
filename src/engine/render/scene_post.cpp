@@ -160,13 +160,6 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
         vfx_filter(FilterContext(cmd, 1u));
         BindSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS);
     }
-    if (subliminal_string_state_.value > 0.0f && subliminal_string_) {
-        gpu::PassPush s;
-        s.ids = glm::uvec4(subliminal_string_state_.texture, 0, 0, 0);
-        const float across = output_extent_.height ? (static_cast<float>(output_extent_.width) / static_cast<float>(output_extent_.height)) / (16.0f / 9.0f) : 1.0f;
-        s.f0 = glm::vec4(subliminal_string_state_.position, subliminal_string_state_.value, across);
-        Fullscreen(cmd, subliminal_string_, s);
-    }
     vkCmdEndRendering(cmd);
     UseTargets(cmd, {{&flare_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}});
 
@@ -209,6 +202,15 @@ void SceneRenderer::RecordPost(VkCommandBuffer cmd, const SceneLighting& lightin
     }
     if (toggles.motion_blur && screen.motion_blur && lighting.valid) {
         RecordMotionBlur(cmd, screen, current);
+    }
+    // Screen-space handwriting must not inherit the scene's camera velocity.
+    if (subliminal_string_state_.value > 0.0f && subliminal_string_) {
+        gpu::PassPush s;
+        s.ids = glm::uvec4(subliminal_string_state_.texture, ldr_index(current), 0, 0);
+        const float across = output_extent_.height ? (static_cast<float>(output_extent_.width) / static_cast<float>(output_extent_.height)) / (16.0f / 9.0f) : 1.0f;
+        s.f0 = glm::vec4(subliminal_string_state_.position, subliminal_string_state_.value, across);
+        s.f1 = glm::vec4(bloom && !tonemap_test ? 1.0f : 0.0f, lighting.valid ? 1.0f : renderer_->exposure, 0.0f, 0.0f);
+        run(subliminal_string_, s);
     }
     if (toggles.color_lut) {
         gpu::PassPush lut;

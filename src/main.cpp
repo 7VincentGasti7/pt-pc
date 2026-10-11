@@ -3592,9 +3592,11 @@ int RunGame(App& app, pt::Vfs& vfs) {
     if (ui_ready) {
         ui.SetViewExtent({app.options.width, app.options.height});
         game.SetOptionsUiAvailable(app.window != nullptr || options.first_boot_options);
-        app.renderer.overlay = [&ui, &hide_game_ui, &photo_view, &app](VkCommandBuffer cmd, VkImageView view, VkExtent2D extent) {
+        app.renderer.overlay = [&ui, &hide_game_ui, &photo_view, &app, &game](VkCommandBuffer cmd, VkImageView view, VkExtent2D extent) {
             ui.SetLetterbox(pt::game::LetterboxAspect(app.settings.display.letterbox));
             if (!hide_game_ui) {
+                // The street uses the ending's strong grain; keep it off the pause menu.
+                if (game.StreetWalkActive() && ui.MenuOpen()) app.renderer.grain[0] = 0.0f;
                 ui.Record(cmd, view, extent);
             } else {
                 ui.RecordPhotoMode(cmd, extent, photo_view);
@@ -3800,7 +3802,10 @@ int RunGame(App& app, pt::Vfs& vfs) {
         if (photo_mode) return;
         photo_had_freecam = freecam;
         start_freecam();
-        if (!photo_had_freecam) {
+        // A cutscene's actor and camera need not be near the gameplay player's parked body.
+        const bool frame_player = !game.Demos().HasActiveCamera() &&
+            (!game.Floor().IsCurrentFloorName("ending") || game.StreetWalkActive());
+        if (!photo_had_freecam && frame_player) {
             // the photo mode starts in front of the player looking back at the face: 1.1 m out along the player's facing at eye
             // height (short of a wall that is nearer), the free camera's range around that point
             const pt::game::Player& player = game.GetPlayer();

@@ -252,7 +252,7 @@ public:
     // time, the temporal patterns and the ray tracing structures, does not advance)
     void SetVrEye(int eye) { vr_eye_ = eye; }
     // the subliminal handwriting of this frame (Draw2D_ShSubliminalString, GameUi): its texture, position and envelope; a
-    // value of 0 draws none. It is added with the lens flares to the scene before the tonemap (subliminal_string.frag)
+    // value of 0 draws none. It is composited after motion blur, preserving its tonemap contribution before the colour LUT
     struct SubliminalString {
         uint32_t texture = 0;
         glm::vec2 position{0.0f};
