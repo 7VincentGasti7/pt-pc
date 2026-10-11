@@ -401,6 +401,7 @@ protected:
 // swapchain recreation. The interpolated images are the HUD-less copies the renderer composites into one target per
 // swapchain image, as for FSR 3, and the interpolation's depth and motion are the upscaler's inputs at the render extent, so
 // it needs an upscaler. macOS 26 or newer: the frame interpolator is that API's (MTLFXFrameInterpolator, macOS 26).
+#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
 class MetalFxFrameGeneration final : public FrameGeneration {
 public:
     explicit MetalFxFrameGeneration(vk::Context& ctx) : ctx_(ctx) {}
@@ -820,12 +821,19 @@ private:
     std::string window_note_;
 };
 
+#endif
+
 std::unique_ptr<UpscaleBackend> CreateMetalfxBackend(vk::Context& ctx) {
     return std::make_unique<MetalFxBackend>(ctx);
 }
 
 std::unique_ptr<FrameGeneration> CreateMetalfxFrameGeneration(vk::Context& ctx) {
+#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
     return std::make_unique<MetalFxFrameGeneration>(ctx);
+#else
+    (void)ctx;
+    return nullptr;
+#endif
 }
 
 }  // namespace pt
