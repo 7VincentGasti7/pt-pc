@@ -34,17 +34,22 @@ still be changed in `data\pt.ini` (`key` under `[voice]`).
 
 ## Museum
 
-- Browse models and audio with clickable arrows and mouse-friendly navigation. Button prompts follow your keyboard or controller.
-- Model inspection uses the same movement and look controls as photo mode, including moving closer, moving vertically and faster movement.
-- Model previews have balanced lighting; the radio opens facing forward, with lighting that follows the inspection camera.
-- Audio entries have speaker icons and show their complete transcript at a consistent brightness. Descriptions and controls no longer overlap the thumbnail strip.
+- **Navigation:** browse models and audio with clickable arrows. Button prompts follow your keyboard or controller.
+- **Model viewer:** the same movement and look controls as photo mode, including moving closer, moving vertically and
+  faster movement.
+- **Lighting:** model previews have balanced lighting; the radio opens facing forward, with lighting that follows the
+  inspection camera.
+- **Audio:** speaker icons identify the recordings, and their complete transcripts stay at a consistent brightness.
+  Descriptions and controls no longer overlap the thumbnail strip.
 
 ## Fixes
 
-- Photo-piece handwriting stays sharp with motion blur enabled.
-- Explore outside: the player body appears in third person, free camera and photo mode; city film grain no longer carries into the pause menu.
-- Photo mode starts at the current cutscene camera during the ending instead of jumping to the gameplay player.
-- **Loop browser:** Gouge it out starts with the eye intact and can be replayed. Dying before solving it no longer leaves it already gouged on respawn; every later loop keeps the gouged picture.
+- **Photo pieces:** the handwriting stays sharp with motion blur enabled.
+- **Explore outside:** the player body appears in third person, free camera and photo mode; city film grain no longer
+  carries into the pause menu.
+- **Photo mode in the ending:** starts at the current cutscene camera instead of jumping to the gameplay player.
+- **Loop browser:** Gouge it out starts with the eye intact and can be replayed. Dying before solving it no longer leaves
+  it already gouged on respawn; every later loop keeps the gouged picture.
 
 - **Lisa in the last loop ran at you the moment she appeared**, even with your back turned or 8 m away: her attack check
   used the spot she had been hidden at (often right by the phone table), not the one she appeared at. She now only attacks
