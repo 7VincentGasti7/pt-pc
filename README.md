@@ -25,8 +25,9 @@ the street, with the voice part included.
   ray-traced shadows, ambient occlusion and reflections need a GPU with Vulkan ray queries (not on macOS). DLSS needs a
   GeForce RTX card; FSR and XeSS run on any recent GPU (Windows only). The settings page greys out what your machine
   cannot run and says why.
-- A microphone for one part of the game, as on the PS4. If you have none, `key = J` under `[voice]` in `pt.ini` lets a
-  key stand in for the spoken word.
+- A microphone for one part of the game, as on the PS4 (saying "Jack"). **No microphone? No problem, and no file to
+  edit:** open **PC settings > Sound**, turn on **Assign J / L2 + R2 for the microphone trigger**, then press **J** on
+  the keyboard or **both triggers together** on a controller when the game is listening.
 
 ## Installing
 
@@ -110,8 +111,9 @@ Languages
   original English, and the word the microphone listens for is always "Jack".
 
 Mods
-- A `mods` folder next to the executable can replace game files, textures and sounds, and run Lua scripts that react
-  to game events. See docs/modding.md and docs/lua_api.md.
+- A `mods` folder next to the executable: add or replace models with your own glTF (`.glb`) files, Lisa included, edit
+  levels with a `level.json` (hide, move, replace, relight), replace textures and sounds, and run Lua scripts. Start with
+  docs/modding-quickstart.md and the working examples in examples/mods.
 
 ## Building from source
 
