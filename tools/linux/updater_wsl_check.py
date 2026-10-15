@@ -70,21 +70,20 @@ def main():
         (out / f"{name}.json").write_text(json.dumps(listing), encoding="utf-8")
         subprocess.run([sys.executable, str(attach), "--setup", str(a.setup), "--payload", str(out / f"{name}.bin"), "--out", str(prepared / f"setup-{name}")],
                        check=True, stdout=subprocess.DEVNULL)
+    # the signed manifest inside the new setup, as tools/ci/release.py makes it (a throwaway key): the setup installs with it too
+    seed = hashlib.sha256(b"pt linux update test key").digest()
+    manifest = release_signing.embed_signed("9.9.9", {"linux": prepared / "setup-new"}, {"linux": out / "new.json"}, seed)
     package = prepared / "release" / "P.T.PC.Port.Setup-linux"
     shutil.copy2(prepared / "setup-new", package)
-    seed = hashlib.sha256(b"pt linux update test key").digest()
-    manifest = release_signing.write_manifest(prepared / "release", "9.9.9", {"linux": package}, {"linux": out / "new.json"})
-    (prepared / "release" / "pt-update-manifest.json.sig").write_text(release_signing.sign(seed, manifest.read_bytes()).hex() + "\n", encoding="ascii")
     (prepared / "public-key.txt").write_text(release_signing.public_key(seed).hex(), encoding="ascii")
     port = 18000 + rng.randrange(2000)
     base = f"http://127.0.0.1:{port}"
     dl = "/repos/LoreanXavier/pt-pc/releases/download/v9.9.9"
     release = {"tag_name": "v9.9.9", "html_url": "https://github.com/LoreanXavier/pt-pc/releases/tag/v9.9.9", "draft": False, "prerelease": False,
-               "body": "test", "assets": [{"name": n, "browser_download_url": f"{base}{dl}/{n}"}
-                                          for n in ("P.T.PC.Port.Setup-linux", "pt-update-manifest.json", "pt-update-manifest.json.sig")]}
+               "body": "test", "assets": [{"name": "P.T.PC.Port.Setup-linux", "size": package.stat().st_size,
+                                           "browser_download_url": f"{base}{dl}/P.T.PC.Port.Setup-linux"}]}
     (prepared / "release" / "latest.json").write_text(json.dumps(release), encoding="utf-8")
-    routes = {"files": {"/repos/LoreanXavier/pt-pc/releases/latest": "latest.json", f"{dl}/pt-update-manifest.json": "pt-update-manifest.json",
-                        f"{dl}/pt-update-manifest.json.sig": "pt-update-manifest.json.sig", "/objects/package": "P.T.PC.Port.Setup-linux"},
+    routes = {"files": {"/repos/LoreanXavier/pt-pc/releases/latest": "latest.json", "/objects/package": "P.T.PC.Port.Setup-linux"},
               "redirects": {f"{dl}/P.T.PC.Port.Setup-linux": f"{base}/objects/package"}}
     (prepared / "release" / "routes.json").write_text(json.dumps(routes), encoding="utf-8")
     dump = prepared / "dump" / "CUSA01127"
@@ -112,7 +111,7 @@ def main():
     subprocess.run(["wsl.exe", "-e", "rm", "-f", linux_result])
     report = json.loads(text)
     (out / "result.json").write_text(text, encoding="utf-8")
-    files = {f["path"]: f for f in json.loads(manifest.read_text(encoding="utf-8"))["files"]["linux"]}
+    files = {f["path"]: f for f in json.loads(manifest)["files"]["linux"]}
     changed = [n for n in new if old.get(n) != new[n]]
     report["changed packed bytes"] = sum(files[n]["packed"] for n in changed)
     report["package bytes"] = package.stat().st_size

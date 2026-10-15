@@ -23,8 +23,7 @@ struct Release {
     std::string notes;
     std::string page;
     std::string package_url;
-    std::string manifest_url;
-    std::string signature_url;
+    uint64_t package_size = 0;
     bool signed_update = false;
     uint64_t download_bytes = 0;
 };
@@ -32,8 +31,6 @@ struct Release {
 int CompareVersions(std::string_view a, std::string_view b);
 std::optional<Release> ParseManifest(std::string_view json, std::string_view platform);
 
-inline constexpr std::string_view kManifestAsset = "pt-update-manifest.json";
-inline constexpr std::string_view kSignatureAsset = "pt-update-manifest.json.sig";
 std::string_view PackageAsset(std::string_view platform);
 struct PackageEntry {
     std::string name;
@@ -58,7 +55,8 @@ std::optional<UpdateManifest> VerifyManifest(std::string_view manifest, std::str
 bool AllowedAssetUrl(std::string_view url);
 bool AllowedMetadataUrl(std::string_view url);
 bool TestOverrides();
-std::optional<UpdateManifest> FetchSignedManifest(const Release& release, std::string* error);
+std::optional<UpdateManifest> FetchSignedManifest(const Release& release, std::string* error, bool* range_ignored = nullptr);
+std::optional<UpdateManifest> ReadSignedManifest(const Release& release, const std::filesystem::path& package, std::string* error);
 inline constexpr double kRangeShare = 0.7;
 uint64_t EstimateDownload(const UpdateManifest& manifest, std::string_view platform, const std::filesystem::path& install);
 

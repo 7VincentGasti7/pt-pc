@@ -7,6 +7,7 @@
 #include <thread>
 
 #include "engine/platform/http.h"
+#include "engine/platform/signed_trailer.h"
 #include "engine/platform/update_check.h"
 
 namespace pt::setup {
@@ -278,17 +279,65 @@ inline GameUpdateResult ApplyGameUpdate(const fs::path& install_in, const GameUp
     page = release->page.empty() ? release->url : release->page;
     if (update::CompareVersions(release->version, installed) <= 0) throw std::runtime_error("Version " + installed + " is already the newest.");
     if (release->package_url.empty()) throw std::runtime_error("The release has no package for this system.");
+
+    const fs::path download = install.parent_path() / (".pt-update-dl-" + platform.unique_id);
+    auto remove_download = [&] {
+        std::error_code error;
+        if (update_journal::OwnFolder(install, download, ".pt-update-dl-")) fs::remove_all(download, error);
+    };
+    std::error_code error;
+    GameUpdateResult result;
+    fs::path downloaded;
+    auto download_whole = [&] {
+        if (!downloaded.empty()) return;
+        fs::create_directories(download, error);
+        if (error) throw std::runtime_error("Could not create the download folder next to the install: " + error.message() + ".");
+        const fs::path file = download / Utf8Path(std::string(update::PackageAsset(update::Platform())));
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        if (!out) throw std::runtime_error("Could not write the download.");
+        http::FetchRequest get;
+        get.url = release->package_url;
+        get.timeout_ms = 30000;
+        get.max_bytes = release->package_size ? release->package_size : 2ull * 1024 * 1024 * 1024;
+        get.allow = [](const std::string& url) { return update::AllowedAssetUrl(url); };
+        get.write = [&](const char* data, size_t size) { out.write(data, std::streamsize(size)); return bool(out); };
+        get.cancelled = [] { return hooks.cancelled && hooks.cancelled(); };
+        progress.Begin(get.max_bytes);
+        get.progress = [&](uint64_t done, uint64_t) { progress.At(done); };
+        const auto fetched = http::Fetch(get);
+        ++result.requests;
+        result.downloaded += fetched.bytes;
+        out.close();
+        if (!fetched.ok) throw std::runtime_error("The download failed: " + fetched.error + ".");
+        if (!out) throw std::runtime_error("Could not write the download (is the disk full?).");
+        downloaded = file;
+    };
+
     std::string why;
-    const auto manifest = update::FetchSignedManifest(*release, &why);
-    if (!manifest) throw std::runtime_error("The update could not be verified: " + why + ".");
+    bool range_ignored = false;
+    std::optional<update::UpdateManifest> manifest;
+    try {
+        manifest = update::FetchSignedManifest(*release, &why, &range_ignored);
+        if (!manifest && range_ignored) {
+            phase(UpdatePhase::Downloading);
+            download_whole();
+            manifest = update::ReadSignedManifest(*release, downloaded, &why);
+        }
+        if (!manifest) throw std::runtime_error("The update could not be verified: " + why + ".");
+    } catch (...) {
+        remove_download();
+        throw;
+    }
     const update::PackageEntry package = manifest->packages.at(std::string(update::Platform()));
     const auto listed = manifest->files.find(std::string(update::Platform()));
-    if (listed == manifest->files.end() || listed->second.empty()) throw std::runtime_error("The signed manifest lists no files for this system.");
+    if (listed == manifest->files.end() || listed->second.empty()) {
+        remove_download();
+        throw std::runtime_error("The signed manifest lists no files for this system.");
+    }
 
     std::vector<PayloadEntry> entries;
     for (const auto& file : listed->second) entries.push_back({file.path, file.size, file.sha256});
     const std::vector<PayloadEntry> needed = DifferingFiles(install, entries, platform.hash_file);
-    GameUpdateResult result;
     result.needed = needed.size();
     std::set<std::string> needed_paths;
     uint64_t needed_packed = 0;
@@ -303,41 +352,18 @@ inline GameUpdateResult ApplyGameUpdate(const fs::path& install_in, const GameUp
         }
     }
     const bool test = update::TestOverrides();
-    bool ranged = have_ranges && double(needed_packed) <= update::kRangeShare * double(package.size) && !(test && std::getenv("PT_UPDATE_TEST_FULL"));
+    bool ranged = downloaded.empty() && have_ranges && double(needed_packed) <= update::kRangeShare * double(package.size) &&
+                  !(test && std::getenv("PT_UPDATE_TEST_FULL"));
     result.ranged = ranged;
 
     phase(UpdatePhase::Downloading);
-    const fs::path download = install.parent_path() / (".pt-update-dl-" + platform.unique_id);
-    auto remove_download = [&] {
-        std::error_code error;
-        if (update_journal::OwnFolder(install, download, ".pt-update-dl-")) fs::remove_all(download, error);
-    };
-    std::error_code error;
     const unsigned char* payload = nullptr;
     size_t payload_size = 0;
     auto open_package = [&] {
         if (payload) return;
-        fs::create_directories(download, error);
-        if (error) throw std::runtime_error("Could not create the download folder next to the install: " + error.message() + ".");
-        const fs::path file = download / Utf8Path(package.name);
-        {
-            std::ofstream out(file, std::ios::binary | std::ios::trunc);
-            if (!out) throw std::runtime_error("Could not write the download.");
-            http::FetchRequest get;
-            get.url = release->package_url;
-            get.timeout_ms = 30000;
-            get.max_bytes = package.size;
-            get.allow = [](const std::string& url) { return update::AllowedAssetUrl(url); };
-            get.write = [&](const char* data, size_t size) { out.write(data, std::streamsize(size)); return bool(out); };
-            get.cancelled = [] { return hooks.cancelled && hooks.cancelled(); };
-            const auto fetched = http::Fetch(get);
-            ++result.requests;
-            result.downloaded += fetched.bytes;
-            out.close();
-            if (!fetched.ok) throw std::runtime_error("The download failed: " + fetched.error + ".");
-            if (!out) throw std::runtime_error("Could not write the download (is the disk full?).");
-        }
-        if (fs::file_size(file, error) != package.size || error) throw std::runtime_error("The download has the wrong size. Nothing was changed.");
+        download_whole();
+        const fs::path& file = downloaded;
+        if (pt::trailer::BodySize(file) != package.size) throw std::runtime_error("The download has the wrong size. Nothing was changed.");
         const auto opened = platform.open_payload(file);
         if (hash_package(file) != package.sha256)
             throw std::runtime_error("The download does not match the signed manifest (SHA-256). Nothing was changed.");

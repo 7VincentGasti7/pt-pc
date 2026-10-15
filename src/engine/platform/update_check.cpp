@@ -16,6 +16,7 @@
 #endif
 
 #include "engine/platform/release_key.h"
+#include "engine/platform/signed_trailer.h"
 
 #include "engine/platform/ed25519.h"
 #include "engine/platform/http.h"
@@ -135,9 +136,11 @@ std::optional<Release> ParseManifest(std::string_view json, std::string_view pla
                 if (!name || !url || url->size() > 2048) continue;
                 if (!wanted.empty() && *name == wanted && url->starts_with("https://") && release.url == *page) release.url = *url;
                 if (!AllowedAssetUrl(*url)) continue;
-                if (!package.empty() && *name == package) release.package_url = *url;
-                if (*name == kManifestAsset) release.manifest_url = *url;
-                if (*name == kSignatureAsset) release.signature_url = *url;
+                if (!package.empty() && *name == package) {
+                    release.package_url = *url;
+                    if (const auto size = asset.members.find("size"); size != asset.members.end() && !size->second.is_string)
+                        release.package_size = std::strtoull(size->second.text.c_str(), nullptr, 10);
+                }
             }
         }
         return release;
@@ -276,25 +279,9 @@ std::optional<UpdateManifest> VerifyManifest(std::string_view manifest, std::str
     return out;
 }
 
-std::optional<UpdateManifest> FetchSignedManifest(const Release& release, std::string* error) {
-    auto get = [&](const std::string& url, std::string& body) {
-        http::FetchRequest request;
-        request.url = url;
-        request.timeout_ms = 10000;
-        request.max_bytes = 4 * 1024 * 1024;
-        request.allow = [](const std::string& u) { return AllowedAssetUrl(u); };
-        request.write = [&](const char* data, size_t size) { body.append(data, size); return true; };
-        const auto result = http::Fetch(request);
-        if (!result.ok && error) *error = "could not download " + url.substr(url.rfind('/') + 1) + ": " + result.error;
-        return result.ok;
-    };
-    std::string manifest, signature;
-    if (release.manifest_url.empty() || release.signature_url.empty()) {
-        if (error) *error = "this release has no signed update manifest";
-        return std::nullopt;
-    }
-    if (!get(release.manifest_url, manifest) || !get(release.signature_url, signature)) return std::nullopt;
-    auto verified = VerifyManifest(manifest, signature, ReleasePublicKey(), error);
+namespace {
+std::optional<UpdateManifest> CheckEmbedded(const Release& release, const std::string& manifest, const std::string& signature, uint64_t body, std::string* error) {
+    auto verified = VerifyManifest(manifest, ed25519::ToHex(reinterpret_cast<const uint8_t*>(signature.data()), signature.size()), ReleasePublicKey(), error);
     if (!verified) return std::nullopt;
     std::string tag = release.version;
     if (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V')) tag.erase(0, 1);
@@ -309,7 +296,57 @@ std::optional<UpdateManifest> FetchSignedManifest(const Release& release, std::s
         if (error) *error = "the update manifest has no package for this system";
         return std::nullopt;
     }
+    if (package->second.size != body) {
+        if (error) *error = "the update manifest names another package than the one it is in";
+        return std::nullopt;
+    }
     return verified;
+}
+}
+
+std::optional<UpdateManifest> FetchSignedManifest(const Release& release, std::string* error, bool* range_ignored) {
+    if (range_ignored) *range_ignored = false;
+    if (release.package_url.empty() || release.package_size < trailer::kFooterSize) {
+        if (error) *error = "the release has no package for this system";
+        return std::nullopt;
+    }
+    std::string url = release.package_url;
+    auto get = [&](uint64_t first, uint64_t last, std::string& body) {
+        http::FetchRequest request;
+        request.url = url;
+        request.timeout_ms = 10000;
+        request.max_bytes = last - first + 1;
+        request.range = "bytes=" + std::to_string(first) + "-" + std::to_string(last);
+        request.allow = [](const std::string& u) { return AllowedAssetUrl(u); };
+        request.write = [&](const char* data, size_t size) { body.append(data, size); return true; };
+        const auto result = http::Fetch(request);
+        if (result.range_ignored && range_ignored) *range_ignored = true;
+        if (!result.ok && error) *error = "could not read the end of " + url.substr(url.rfind('/') + 1) + ": " + result.error;
+        if (result.ok && !result.final_url.empty()) url = result.final_url;
+        return result.ok && body.size() == last - first + 1;
+    };
+    const uint64_t size = release.package_size;
+    std::string last;
+    if (!get(size - trailer::kFooterSize, size - 1, last)) return std::nullopt;
+    const auto footer = trailer::Parse(reinterpret_cast<const unsigned char*>(last.data()), size);
+    if (!footer) {
+        if (error) *error = "the package carries no signed update manifest";
+        return std::nullopt;
+    }
+    std::string signed_part;
+    if (!get(footer->manifest_offset, footer->signature_offset + footer->signature_length - 1, signed_part)) return std::nullopt;
+    return CheckEmbedded(release, signed_part.substr(0, size_t(footer->manifest_length)), signed_part.substr(size_t(footer->manifest_length)),
+                         footer->body(), error);
+}
+
+std::optional<UpdateManifest> ReadSignedManifest(const Release& release, const std::filesystem::path& package, std::string* error) {
+    std::string manifest, signature;
+    const auto footer = trailer::Read(package);
+    if (!footer || !trailer::ReadSigned(package, manifest, signature)) {
+        if (error) *error = "the package carries no signed update manifest";
+        return std::nullopt;
+    }
+    return CheckEmbedded(release, manifest, signature, footer->body(), error);
 }
 
 uint64_t EstimateDownload(const UpdateManifest& manifest, std::string_view platform, const std::filesystem::path& install) {
@@ -351,11 +388,13 @@ void Checker::Start(const std::filesystem::path& install) {
         request.max_body = 512 * 1024;
         if (const auto response = http::Get(request); response && response->status == 200) {
             if (auto release = ParseManifest(response->body, Platform()); release && CompareVersions(release->version, CurrentVersion()) > 0) {
-                if (!release->package_url.empty() && !release->manifest_url.empty() && !release->signature_url.empty()) {
+                if (!release->package_url.empty() && release->package_size) {
                     std::string error;
-                    const auto manifest = FetchSignedManifest(*release, &error);
-                    release->signed_update = manifest.has_value();
+                    bool range_ignored = false;
+                    const auto manifest = FetchSignedManifest(*release, &error, &range_ignored);
+                    release->signed_update = manifest.has_value() || range_ignored;
                     if (manifest && !install.empty()) release->download_bytes = EstimateDownload(*manifest, Platform(), install);
+                    else if (range_ignored) release->download_bytes = release->package_size;
                 }
                 std::lock_guard lock(state->mutex);
                 state->newer = std::move(release);

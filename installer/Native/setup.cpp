@@ -58,17 +58,20 @@ void CheckParents(const fs::path& destination){
         auto parent=p.parent_path();if(parent==p)break;p=parent;
     }
 }
-std::string Hash(const fs::path& file){
+std::string HashPart(const fs::path& file,uint64_t limit){
     BCRYPT_ALG_HANDLE algorithm{};BCRYPT_HASH_HANDLE hash{};
     if(BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,0)<0)throw std::runtime_error("SHA256 provider unavailable.");
     DWORD size=0,used=0;BCryptGetProperty(algorithm,BCRYPT_OBJECT_LENGTH,reinterpret_cast<PUCHAR>(&size),sizeof(size),&used,0);
     std::vector<UCHAR> object(size);if(BCryptCreateHash(algorithm,&hash,object.data(),size,nullptr,0,0)<0){BCryptCloseAlgorithmProvider(algorithm,0);throw std::runtime_error("SHA256 initialization failed.");}
     std::ifstream input(file,std::ios::binary);std::vector<char> buffer(1024*1024);bool ok=bool(input);
-    while(input){CheckCancel();input.read(buffer.data(),buffer.size());if(input.gcount() && BCryptHashData(hash,reinterpret_cast<PUCHAR>(buffer.data()),ULONG(input.gcount()),0)<0)ok=false;}
-    std::array<UCHAR,32> bytes{};ok=ok && input.eof() && BCryptFinishHash(hash,bytes.data(),bytes.size(),0)>=0;BCryptDestroyHash(hash);BCryptCloseAlgorithmProvider(algorithm,0);
+    uint64_t left=limit;
+    while(input && left){CheckCancel();input.read(buffer.data(),std::streamsize(std::min<uint64_t>(buffer.size(),left)));left-=uint64_t(input.gcount());if(input.gcount() && BCryptHashData(hash,reinterpret_cast<PUCHAR>(buffer.data()),ULONG(input.gcount()),0)<0)ok=false;}
+    std::array<UCHAR,32> bytes{};ok=ok && (input.eof() || left==0) && BCryptFinishHash(hash,bytes.data(),bytes.size(),0)>=0;BCryptDestroyHash(hash);BCryptCloseAlgorithmProvider(algorithm,0);
     if(!ok)throw std::runtime_error("Could not verify file integrity.");
     const char* hex="0123456789abcdef";std::string result;for(auto b:bytes){result+=hex[b>>4];result+=hex[b&15];}return result;
 }
+std::string Hash(const fs::path& file){return HashPart(file,UINT64_MAX);}
+std::string HashBody(const fs::path& file){return HashPart(file,pt::trailer::BodySize(file));}
 void VerifyIntegrity(){
     CheckCancel();
     if(!pt::integrity::IntegrityOk())throw std::runtime_error("This setup file is damaged or was modified. Please download it again.");

@@ -15,10 +15,11 @@ The large files stay on the PC under --dest/<stamp> (or --dest/--name); --out ge
 --version is this release's version (PT_VERSION, shown by the game and the setup and compared by the update check).
 PT_SLOT names a wrapper script the builds go through.
 
-The in-game update (docs/updates.md, "Signed update manifest"): after the packages, pt-update-manifest.json (the version, each
-setup's size and SHA-256, the files its payload installs) is written next to them and signed with the release key
-(tools/ci/release_signing.py, --signing-keys, default %USERPROFILE%\\pt-release-keys) as pt-update-manifest.json.sig. Both
-are release assets. A run without the key fails; the key is never copied into the release or the repository.
+The in-game update (docs/updates.md, "Signed update manifest"): after the setups are built and stamped, the update manifest (the
+version, each setup's size and SHA-256 before the trailer, the files its payload installs and where they lie) is signed with the
+release key (tools/ci/release_signing.py, --signing-keys, default %USERPROFILE%\\pt-release-keys) and appended with its signature
+to each setup (tools/ci/signed_trailer.py). The release carries no separate manifest file: only the setups, the portable zips and
+the macOS zips. A run without the key fails; the key is never copied into the release or the repository.
 
 The installer needs the LGPL LibOrbisPkg source: --liborbis, else the first LibOrbisPkg-* folder under this repository's
 dump/ (one or two levels down). It is copied into build/, patched there
@@ -299,10 +300,11 @@ if a.linux_setup and a.linux_setup == "P.T.PC.Port.Setup-linux" and (dest / a.li
     packages["linux"], listings["linux"] = dest / a.linux_setup, linux_listing
 if packages:
     keys = a.signing_keys or release_signing.DEFAULT_KEYS
-    manifest = release_signing.write_manifest(dest, a.version, packages, listings)
-    signature = release_signing.sign_manifest(manifest, keys)
-    report["update_manifest"] = str(manifest)
-    report["files"] += [str(manifest), str(signature)]
+    # signed and embedded in every setup (a later --linux-only run embeds it again, for both setups); no file of its own
+    data = release_signing.embed_signed(a.version, packages, listings, release_signing.release_seed(keys))
+    report["update_manifest"] = f"embedded in {', '.join(p.name for p in packages.values())} ({len(data)} bytes)"
+    for leftover in ("pt-update-manifest.json", "pt-update-manifest.json.sig"):
+        (dest / leftover).unlink(missing_ok=True)
 # GitHub release metadata supplies updates. Only platform packages are published.
 if a.legacy_update_manifest:
     from legacy_update_manifest import write_manifest

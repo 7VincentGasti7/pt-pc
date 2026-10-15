@@ -44,8 +44,7 @@ std::string HashFile(const fs::path& file) {
 }
 std::vector<unsigned char> Payload() {
     std::ifstream self("/proc/self/exe", std::ios::binary);
-    self.seekg(0, std::ios::end);
-    const auto size = uint64_t(self.tellg());
+    const auto size = pt::trailer::BodySize("/proc/self/exe");
     if (size < 24) throw std::runtime_error("Installer payload missing.");
     char trailer[24];
     self.seekg(std::streamoff(size - 24));
@@ -406,14 +405,17 @@ int GameUpdate(int argc, char** argv) {
             std::ifstream in(file, std::ios::binary);
             package->bytes.assign(std::istreambuf_iterator<char>(in), {});
             unsigned char digest[32];
-            pt::integrity::Sha256(package->bytes.data(), package->bytes.size(), digest);
-            package->sha256 = HexDigest(digest);
             const auto& b = package->bytes;
-            if (b.size() < 24 || std::memcmp(b.data() + b.size() - 24, "PTPAYLD1", 8) != 0) throw std::runtime_error("The downloaded package holds no payload.");
+            size_t body = b.size();
+            if (b.size() >= pt::trailer::kFooterSize)
+                if (const auto footer = pt::trailer::Parse(b.data() + b.size() - pt::trailer::kFooterSize, b.size())) body = size_t(footer->body());
+            pt::integrity::Sha256(package->bytes.data(), body, digest);
+            package->sha256 = HexDigest(digest);
+            if (body < 24 || std::memcmp(b.data() + body - 24, "PTPAYLD1", 8) != 0) throw std::runtime_error("The downloaded package holds no payload.");
             uint64_t offset = 0, length = 0;
-            std::memcpy(&offset, b.data() + b.size() - 16, 8);
-            std::memcpy(&length, b.data() + b.size() - 8, 8);
-            if (offset + length + 24 != b.size()) throw std::runtime_error("The downloaded package holds no payload.");
+            std::memcpy(&offset, b.data() + body - 16, 8);
+            std::memcpy(&length, b.data() + body - 8, 8);
+            if (offset + length + 24 != body) throw std::runtime_error("The downloaded package holds no payload.");
             return {b.data() + offset, size_t(length)};
         };
         platform.hash_file = HashFile;

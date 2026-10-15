@@ -1,6 +1,7 @@
 #include "engine/platform/ed25519.h"
 #include "engine/platform/http.h"
 #include "engine/platform/os.h"
+#include "engine/platform/signed_trailer.h"
 #include "engine/platform/update_check.h"
 
 #include <cstdio>
@@ -172,6 +173,34 @@ int main(int argc, char** argv) {
         }
     }
     {
+        auto footer = [](uint64_t mo, uint64_t ml, uint64_t so, uint64_t sl, const char* magic = "PTSIGND1", uint32_t version = 1) {
+            std::string f(48, '\0');
+            std::memcpy(f.data(), magic, 8);
+            std::memcpy(f.data() + 8, &version, 4);
+            for (auto [at, v] : {std::pair{16, mo}, std::pair{24, ml}, std::pair{32, so}, std::pair{40, sl}}) std::memcpy(f.data() + at, &v, 8);
+            return f;
+        };
+        auto parse = [](const std::string& f, uint64_t size) { return trailer::Parse(reinterpret_cast<const unsigned char*>(f.data()), size); };
+        const auto good = parse(footer(1000, 200, 1200, 64), 1312);
+        check(good && good->body() == 1000 && good->manifest_length == 200, "trailer: a footer is read");
+        check(!parse(footer(1000, 200, 1200, 64), 1313), "trailer: a footer that does not end the file is refused");
+        check(!parse(footer(1000, 200, 1201, 64), 1313), "trailer: a gap between manifest and signature is refused");
+        check(!parse(footer(1000, 200, 1200, 63), 1311), "trailer: a signature of another size is refused");
+        check(!parse(footer(1000, 200, 1200, 64, "PTSIGND2"), 1312) && !parse(footer(1000, 200, 1200, 64, "PTSIGND1", 2), 1312),
+              "trailer: another magic or version is refused");
+        check(!parse(footer(0, 0, 0, 64), 112), "trailer: an empty manifest is refused");
+        const std::filesystem::path file = std::filesystem::temp_directory_path() / ("pt-trailer-" + std::to_string(pt::os::ProcessId()) + ".bin");
+        {
+            std::ofstream out(file, std::ios::binary);
+            out << std::string(1000, 'b') << std::string(200, 'm') << std::string(64, 's') << footer(1000, 200, 1200, 64);
+        }
+        std::string manifest, signature;
+        check(trailer::BodySize(file) == 1000 && trailer::ReadSigned(file, manifest, signature) && manifest == std::string(200, 'm') &&
+                  signature == std::string(64, 's'),
+              "trailer: the body size, the manifest and the signature of a file on disk");
+        std::filesystem::remove(file);
+    }
+    {
         check(update::AllowedAssetUrl("https://github.com/LoreanXavier/pt-pc/releases/download/v1.0.4/P.T.PC.Port.Setup.exe"), "allow github.com");
         check(update::AllowedAssetUrl("https://objects.githubusercontent.com/github-production-release-asset/1"), "allow objects.githubusercontent.com");
         check(update::AllowedAssetUrl("https://release-assets.githubusercontent.com/github-production-release-asset/1?sp=r"), "allow release-assets");
@@ -185,12 +214,14 @@ int main(int argc, char** argv) {
         if (os::GetEnv("PT_UPDATE_TEST").empty())
             check(!update::AllowedAssetUrl("http://127.0.0.1:8000/x") && !update::AllowedAssetUrl("https://localhost/x"), "loopback refused outside tests");
         const char* signed_release = R"({"tag_name":"v1.0.4","html_url":"https://github.com/LoreanXavier/pt-pc/releases/tag/v1.0.4","assets":[
-          {"name":"P.T.PC.Port.Setup.exe","browser_download_url":"https://github.com/LoreanXavier/pt-pc/releases/download/v1.0.4/P.T.PC.Port.Setup.exe"},
-          {"name":"pt-update-manifest.json","browser_download_url":"https://github.com/LoreanXavier/pt-pc/releases/download/v1.0.4/pt-update-manifest.json"},
-          {"name":"pt-update-manifest.json.sig","browser_download_url":"https://example.org/pt-update-manifest.json.sig"}]})";
+          {"name":"P.T.PC.Port.Setup.exe","size":416382464,"browser_download_url":"https://github.com/LoreanXavier/pt-pc/releases/download/v1.0.4/P.T.PC.Port.Setup.exe"},
+          {"name":"P.T.PC.Port.Setup-linux","size":5,"browser_download_url":"https://example.org/P.T.PC.Port.Setup-linux"}]})";
         const auto release = update::ParseManifest(signed_release, "windows");
-        check(release && release->package_url.ends_with("/P.T.PC.Port.Setup.exe") && release->manifest_url.ends_with("/pt-update-manifest.json") &&
-                  release->signature_url.empty() && release->page.ends_with("/v1.0.4") && !release->signed_update,
+        check(release && release->package_url.ends_with("/P.T.PC.Port.Setup.exe") && release->package_size == 416382464 &&
+                  release->page.ends_with("/v1.0.4") && !release->signed_update,
+              "the in-game update's package and its size from the release assets");
+        const auto linux_release = update::ParseManifest(signed_release, "linux");
+        check(linux_release && linux_release->package_url.empty() && linux_release->package_size == 0,
               "release assets of the in-game update come only from allowed hosts");
         const auto mac = update::ParseManifest(signed_release, "macos-arm64");
         check(mac && mac->package_url.empty(), "macOS has no in-game update package");

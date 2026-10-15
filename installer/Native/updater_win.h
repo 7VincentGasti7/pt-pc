@@ -268,6 +268,7 @@ inline Outcome Work(State& s) {
         platform.pid = GetCurrentProcessId();
         platform.check_parents = CheckParents;
         platform.hash_file = Hash;
+        platform.hash_package = HashBody;
         auto view = std::make_shared<PackageView>();
         platform.open_payload = [view](const fs::path& package) { return OpenPayload(*view, package); };
         platform.close_payload = [view] { view->Close(); };

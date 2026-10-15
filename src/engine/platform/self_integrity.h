@@ -4,6 +4,7 @@
 #include <bcrypt.h>
 #endif
 #include "engine/platform/os.h"
+#include "engine/platform/signed_trailer.h"
 
 #include <cstdint>
 #include <cstring>
@@ -83,6 +84,8 @@ inline bool IntegrityOk() {
 #endif
     std::ifstream file(path, std::ios::binary);
     std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (bytes.size() >= trailer::kFooterSize)
+        if (const auto footer = trailer::Parse(bytes.data() + bytes.size() - trailer::kFooterSize, bytes.size())) bytes.resize(size_t(footer->body()));
     unsigned char marker[16];
     for (int i = 0; i < 16; ++i) marker[i] = kIntegrity[i];
     size_t at = std::string::npos;
