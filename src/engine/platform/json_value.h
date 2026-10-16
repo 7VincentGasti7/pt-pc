@@ -8,6 +8,7 @@
 #include <vector>
 
 namespace pt::json {
+inline namespace update_json {
 
 struct Value {
     std::string text;
@@ -108,4 +109,5 @@ inline const std::string* Text(const Value& object, const char* key) {
     return it != object.members.end() && it->second.is_string && !it->second.text.empty() ? &it->second.text : nullptr;
 }
 
+}
 }

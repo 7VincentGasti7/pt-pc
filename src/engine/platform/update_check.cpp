@@ -18,6 +18,7 @@
 #include "engine/platform/release_key.h"
 #include "engine/platform/signed_trailer.h"
 
+#include "engine/core/log.h"
 #include "engine/platform/ed25519.h"
 #include "engine/platform/http.h"
 #include "engine/platform/json_value.h"
@@ -381,6 +382,7 @@ void Checker::Start(const std::filesystem::path& install) {
         return;
     }
     std::thread([state = state_, url, install] {
+        try {
         http::Request request;
         request.url = url;
         request.timeout_ms = 5000;
@@ -399,6 +401,17 @@ void Checker::Start(const std::filesystem::path& install) {
                 std::lock_guard lock(state->mutex);
                 state->newer = std::move(release);
             }
+        }
+        } catch (const std::exception& e) {
+#if !defined(PT_UPDATER_ONLY)
+            LogWarn("update: the check failed ({})", e.what());
+#else
+            (void)e;
+#endif
+        } catch (...) {
+#if !defined(PT_UPDATER_ONLY)
+            LogWarn("update: the check failed");
+#endif
         }
         state->done = true;
     }).detach();
