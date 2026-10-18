@@ -3,6 +3,7 @@
 #include "engine/core/ascii.h"
 #include "engine/platform/update_check.h"
 #include "engine/platform/update_journal.h"
+#include "engine/platform/macos_data_path.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -865,14 +866,24 @@ std::filesystem::path UserDataDir() {
 #ifdef __APPLE__
     /* inside the app bundle (ExecutableDir() is Contents/Resources) nothing may be written: a signed bundle, often in
        /Applications; the data folder is then the user's (docs/macos.md). A build folder keeps it next to pt. */
-    const std::filesystem::path base = pt::ExecutableDir();
-    const bool bundled = std::any_of(base.begin(), base.end(), [](const std::filesystem::path& part) { return part.extension() == ".app"; });
-    if (bundled) {
-        const auto home = pt::os::GetEnv("HOME");
-        if (!home.empty()) return pt::os::PathFromUtf8(home) / "Library" / "Application Support" / "pt-port" / "pt";
-    }
-#endif
+    static const std::filesystem::path directory = [] {
+        const std::filesystem::path base = pt::ExecutableDir();
+        const bool bundled = std::any_of(base.begin(), base.end(), [](const std::filesystem::path& part) { return part.extension() == ".app"; });
+        std::filesystem::path requested = base / "data";
+        if (bundled) {
+            const auto home = pt::os::GetEnv("HOME");
+            if (!home.empty()) requested = pt::os::PathFromUtf8(home) / "Library" / "Application Support" / "pt-port" / "pt";
+        }
+        std::error_code error;
+        const auto resolved = pt::platform::ResolveMacDataPath(requested, error);
+        if (!error) return resolved;
+        pt::LogWarn("Cannot resolve macOS data folder '{}': {}", pt::os::PathToUtf8(requested), error.message());
+        return requested;
+    }();
+    return directory;
+#else
     return pt::ExecutableDir() / "data";
+#endif
 }
 
 bool SaveMoveTest() { return !pt::os::GetEnv("PT_TEST_SAVE_MOVE").empty(); }
@@ -958,7 +969,12 @@ std::filesystem::path FindGameDir(const Options& options, std::string& source, b
         std::ifstream in(remembered_file, std::ios::binary);
         std::string line;
         if (std::getline(in, line)) {
-            const std::filesystem::path remembered = std::filesystem::path(reinterpret_cast<const char8_t*>(line.c_str()));
+            std::filesystem::path remembered = std::filesystem::path(reinterpret_cast<const char8_t*>(line.c_str()));
+#ifdef __APPLE__
+            std::error_code path_error;
+            const auto resolved = pt::platform::ResolveMacDataPath(remembered, path_error);
+            if (!path_error) remembered = resolved;
+#endif
             if (LooksLikeGameDir(remembered)) {
                 source = "game_dir.txt, the folder picked at an earlier start";
                 return remembered;

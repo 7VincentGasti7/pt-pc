@@ -386,6 +386,12 @@ endif()
 
 add_executable(pt_user_data_test tests/user_data_test.cpp)
 target_link_libraries(pt_user_data_test PRIVATE pt_engine)
+if(APPLE)
+  add_executable(pt_macos_data_path_test tests/macos_data_path_test.cpp
+    src/engine/platform/macos_data_path.cpp src/engine/platform/user_data.cpp src/engine/platform/os.cpp)
+  target_include_directories(pt_macos_data_path_test PRIVATE src)
+  target_link_libraries(pt_macos_data_path_test PRIVATE "-framework CoreFoundation")
+endif()
 add_executable(pt_crash_upload_test tests/crash_upload_test.cpp)
 target_link_libraries(pt_crash_upload_test PRIVATE pt_engine)
 

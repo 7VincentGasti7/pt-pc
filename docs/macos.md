@@ -31,6 +31,10 @@ what has been tried on a Mac is in the credits below.
 Settings, the save and `pt.log` are in `~/Library/Application Support/pt-port/pt/`. Mods go
 in `mods/` in that folder (docs/modding.md), since the app bundle is no place for user files.
 
+The `pt-port` or `pt` directory may be a symbolic link or a Finder alias to a writable folder on an already mounted drive.
+The app resolves the target before preparing its data folder; the link/alias, settings and saves stay in place. Missing
+targets and read-only folders still fail their checks. The app does not mount a missing volume automatically.
+
 ## Platform layer
 
 macOS takes the POSIX side of `src/engine/platform` (docs/linux.md), with these differences:
