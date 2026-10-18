@@ -1342,8 +1342,6 @@ void SceneRenderer::RecordRayTracing(gpu::CommandList& cmd) {
         c.double_sided = d.sub->shadow ? d.sub->shadow_double_sided : d.sub->double_sided;
         c.fitting = ray_fitting && (mask & 128u) != 0;
         c.mirror_hidden = (d.hidden_views & 2u) != 0;
-        c.path_foliage_art = rt_path_ && c.submesh == 6u &&
-                             d.mesh->name == "/Assets/sh/environ/object/shsb/house/shsb_hous001/scenes/shsb_hous001_ches003.fmdl";
         c.light_fitting = c.fitting ? d.light_fitting : 0;
         rt_casters_.push_back(c);
     }

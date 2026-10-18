@@ -28,11 +28,11 @@ int main() {
         ++cases;
     };
     check("half-translucent static leaf", 0.5f, 0.5f, 1.0f, leaf, 8u, false);
-    check("clock foliage art override", 1.0f, 0.5f, 1.0f, leaf, 8u | 2048u, false);
-    check("clock override includes opaque leaf texels", 1.0f, 0.0f, 1.0f, leaf, 8u | 2048u, false);
-    check("clock override omits every direct leaf shadow", 1.0f, 0.5f, 1.0f, leaf, 8u | 2048u, true);
-    check("clock override excluded from indirect visibility", 0.0f, 0.5f, 0.0f, leaf, 8u | 2048u, false);
-    check("clock override does not affect skin", 0.0f, 0.5f, 1.0f, leaf, 8u | 4u | 2048u, false);
+    check("unused record bits do not erase leaf shadows", 0.5f, 0.5f, 1.0f, leaf, 8u | 2048u, false);
+    check("unused record bits do not make opaque leaf texels transparent", 0.0f, 0.0f, 1.0f, leaf, 8u | 2048u, false);
+    check("unused record bits retain authored leaf shadows", 0.0f, 0.5f, 1.0f, leaf, 8u | 2048u, true);
+    check("unused record bits retain indirect visibility", 0.0f, 0.5f, 0.0f, leaf, 8u | 2048u, false);
+    check("unused record bits do not affect skin", 0.0f, 0.5f, 1.0f, leaf, 8u | 4u | 2048u, false);
     check("transmission cap preserves a shadow", 0.75f, 1.0f, 1.0f, leaf, 8u, false);
     check("adjustable strength", 0.4f, 0.8f, 0.5f, leaf, 8u, false);
     check("zero strength restores opaque shadow", 0.0f, 0.8f, 0.0f, leaf, 8u, false);

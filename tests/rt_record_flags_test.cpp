@@ -19,9 +19,7 @@ int main() {
         caster.mirror_hidden = true;
         const uint32_t hidden = pt::RtRecordFlags(caster);
         if ((hidden ^ expected) != 1024u || (hidden & 0xFFFF0000u) != 0u) ++failures;
-        caster.path_foliage_art = true;
-        if ((pt::RtRecordFlags(caster) ^ hidden) != 2048u) ++failures;
-        cases += 3;
+        cases += 2;
     }
     }
     std::printf("ray record visibility flags: %u cases, %d failures\n", cases, failures);
