@@ -1,5 +1,7 @@
 # P.T. for PC
 
+> **Bug reports:** I've closed GitHub Issues because of ongoing spam attacks. Please join the [Discord server](https://discord.gg/3vKwUf2eTb) to report bugs.
+
 ![Lisa in the hallway](docs/media/lisa.gif)
 
 If the port is worth something to you, you can buy me a coffee: [ko-fi.com/loreanxavier](https://ko-fi.com/loreanxavier). It keeps the testing hardware and the releases coming.
