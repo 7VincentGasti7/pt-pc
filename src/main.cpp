@@ -5182,7 +5182,10 @@ int RunGame(App& app, pt::Vfs& vfs) {
             photo_paused = true;
             if (game.Audio()) game.Audio()->PostEvent("Pause_All", nullptr);
         }
-        pt::LogInfo("extras: photo mode on");
+        const auto& photo = photo_panel.Settings();
+        pt::LogInfo("extras: photo mode on, lens {} mm, roll {}, exposure {}, aspect {}, resolution {}, filter {}",
+                    photo.focal_length_mm, photo.roll, photo.exposure, photo.aspect, static_cast<int>(photo.resolution),
+                    static_cast<int>(photo.filter));
     };
     struct TheaterView {
         std::unique_ptr<pt::game::ArchiveTheater> theater;
@@ -5832,6 +5835,10 @@ int RunGame(App& app, pt::Vfs& vfs) {
                         freecam_camera.yaw = photo_start_camera.yaw;
                         freecam_camera.pitch = photo_start_camera.pitch;
                         game.SetCameraOverride(freecam_camera);
+                    } else if (action == pt::game::PhotoPanel::Action::ResetSettings) {
+                        photo_status.clear();
+                        photo_status_time = 0.0f;
+                        pt::LogInfo("extras: photo settings reset");
                     }
                 }
                 if (usable && ((polled.raw_pressed & pt::kRawCircle) || polled.cancel)) {
