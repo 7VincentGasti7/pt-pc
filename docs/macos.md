@@ -21,9 +21,10 @@ what has been tried on a Mac is in the credits below.
    that hasn't been notarised](https://support.apple.com/en-gb/102445).
 3. On the first start without game files the game asks for them (docs/installer.md, First start without game files):
    **Choose PKG file** extracts your P.T. fake PKG with the same helper the Windows and Linux setups use (in the app as
-   `Contents/MacOS/extractor/PT.PkgExtract`) into `~/Library/Application Support/pt-port/pt/CUSA01127`, with a progress
-   window; **Choose game folder** takes an extracted CUSA01127 folder (or the folder containing it). The choice is
-   remembered. A `CUSA01127` or `game/CUSA01127` folder next to the app is found without asking, and `pt --game <folder>`
+   `Contents/MacOS/extractor/PT.PkgExtract`) into `~/Library/Application Support/pt-port/pt/<title ID>` (`CUSA01127` for the
+   US release, the package's own title ID for another release), with a progress window; **Choose game folder** takes your
+   extracted P.T. folder, whatever its name (or the folder containing it). The choice is remembered. A `CUSA01127`,
+   `CUSA01114` or `game/CUSA01127` folder, or any folder with the game files, next to the app is found without asking, and `pt --game <folder>`
    (`P.T. PC Port.app/Contents/MacOS/pt`) still works.
 4. macOS asks once for the microphone, for the part of the game that listens for the word. `[voice] key = J` in `pt.ini`
    works here too.

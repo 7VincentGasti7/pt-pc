@@ -1,5 +1,5 @@
 """Prepare a native C++ setup payload. Extractor is a separate replaceable LGPL tool."""
-import argparse,hashlib,json,struct,zipfile,zlib
+import argparse,hashlib,json,re,struct,zipfile,zlib
 from pathlib import Path
 REPO=Path(__file__).resolve().parent.parent
 p=argparse.ArgumentParser();p.add_argument('--runtime',type=Path,required=True);p.add_argument('--extractor',type=Path,required=True);p.add_argument('--source',type=Path,required=True)
@@ -24,7 +24,8 @@ with zipfile.ZipFile(a.runtime) as z:
         parts=Path(entry.filename).parts
         if entry.is_dir() or len(parts)<2:continue
         name=Path(*parts[1:]).as_posix()
-        if parts[1].lower() in {'game','cusa01127','enhanced-textures','data'}:raise RuntimeError('Game assets or writable data directory in runtime ZIP')
+        # the game folder of any release (CUSA01127, CUSA01114, ...) or the archives under any name: no game data in a release
+        if parts[1].lower() in {'game','enhanced-textures','data'} or re.match(r'cusa\d{5}($|[^0-9a-z])',parts[1].lower()) or parts[-1].lower() in {'chunk1.psarc','texture.qar'}:raise RuntimeError('Game assets or writable data directory in runtime ZIP')
         files[name]=z.read(entry)
 for file in a.extractor.rglob('*'):
     if file.is_file() and file.suffix.lower()!='.pdb':files['extractor/'+file.relative_to(a.extractor).as_posix()]=file.read_bytes()

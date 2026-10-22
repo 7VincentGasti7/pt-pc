@@ -116,6 +116,11 @@ def main():
         shutil.copy2(spv, resources / "shaders" / spv.name)
     copy_voice(build / "voice", resources / "voice")
     shutil.copytree(build / "fonts", resources / "fonts")
+    # the port's data pack (src/engine/fs/data_pack.h), read from ExecutableDir(), which is Contents/Resources in the app
+    if (build / "extras.pak").is_file():
+        shutil.copy2(build / "extras.pak", resources / "extras.pak")
+    else:
+        print(f"warning: no data pack at {build / 'extras.pak'}; the files it holds are missing from the app")
     if (build / "licenses").is_dir():
         shutil.copytree(build / "licenses", resources / "licenses",
                         ignore=shutil.ignore_patterns("enhanced-textures", "Real-ESRGAN-*.txt", "bc7enc.txt"))
